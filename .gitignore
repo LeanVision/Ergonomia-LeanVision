@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# Pesos de modelos de pose: se bajan aparte.
+*.pt
+*.task
+# Videos y resultados de análisis: pueden tener imágenes de trabajadores.
+*.mp4
+*.mov
+*_ergonomia/
