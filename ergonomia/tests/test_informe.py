@@ -22,10 +22,16 @@ def test_informe_de_postura_quieta_agachada():
     assert inf["reba"]["actividad_sumada"] == 1  # estática más de 1 minuto
     texto = informe_markdown(inf)
     assert "planilla 2.F" in texto and "La muñeca no se midió" in texto
+    assert "planilla 2.A" in texto and "No se detectaron momentos" in texto  # manos lejos del piso
 
 
 class _PoseFalsa:
     """Brazo que sube y baja una vez cada 2 segundos."""
+
+    cerrado = False
+
+    def cerrar(self):
+        _PoseFalsa.cerrado = True
 
     def estimar(self, cuadro, tiempo_ms):
         codo = 80 + 40 * math.sin(2 * math.pi * 0.5 * tiempo_ms / 1000)
@@ -41,7 +47,9 @@ def test_de_punta_a_punta(tmp_path, monkeypatch):
 
     monkeypatch.setattr(analizar, "crear_modelo", lambda nombre, ruta: _PoseFalsa())
     salida = tmp_path / "salida"
-    analizar.main([str(video), "--salida", str(salida), "--carga-kg", "3", "--video-esqueleto"])
+    analizar.main([str(video), "--salida", str(salida), "--carga-kg", "3",
+                   "--video-esqueleto", "--video-superpuesto"])
+    assert _PoseFalsa.cerrado
 
     inf = json.loads((salida / "informe.json").read_text(encoding="utf-8"))
     assert inf["cuadros_analizados"] == 300  # 10 por segundo
@@ -50,4 +58,5 @@ def test_de_punta_a_punta(tmp_path, monkeypatch):
     assert inf["reba"]["actividad_sumada"] == 1  # más de 4 por minuto
     assert (salida / "informe.md").exists()
     assert (salida / "esqueleto.mp4").stat().st_size > 0
+    assert (salida / "superpuesto.mp4").stat().st_size > 0
     assert len((salida / "angulos.csv").read_text().splitlines()) == 301

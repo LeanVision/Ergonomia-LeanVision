@@ -39,6 +39,9 @@ class PoseYolo:
 
         self.modelo = YOLO(pesos)
 
+    def cerrar(self) -> None:
+        pass
+
     def estimar(self, cuadro_bgr: np.ndarray, tiempo_ms: int) -> Esqueleto | None:
         resultado = self.modelo(cuadro_bgr, verbose=False)[0]
         if resultado.keypoints is None or len(resultado.boxes) == 0:
@@ -63,6 +66,12 @@ class PoseMediaPipe:
             num_poses=1,
         )
         self.detector = vision.PoseLandmarker.create_from_options(opciones)
+
+    def cerrar(self) -> None:
+        # Cerrarlo a mano: si queda para el recolector al salir de Python,
+        # MediaPipe tira un error (inofensivo pero confuso) porque sus
+        # librerías ya se descargaron.
+        self.detector.close()
 
     def estimar(self, cuadro_bgr: np.ndarray, tiempo_ms: int) -> Esqueleto | None:
         import cv2

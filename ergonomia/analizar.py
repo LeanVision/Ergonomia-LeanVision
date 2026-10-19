@@ -5,10 +5,15 @@ Uso (desde la raíz del repo):
     python -m ergonomia.analizar video.mp4 --carga-kg 8 --agarre regular
 
 Deja en la carpeta de salida informe.md (para leer), informe.json (para
-procesar) y angulos.csv (ángulos cuadro por cuadro). Con --video-esqueleto
-también un video con SOLO el esqueleto sobre fondo negro: sirve para
-mostrar el análisis sin exponer la cara ni el cuerpo del trabajador. Los
-cuadros del video original no se guardan.
+procesar) y angulos.csv (ángulos cuadro por cuadro). Opcionalmente:
+
+- --video-esqueleto: SOLO el esqueleto sobre fondo negro. Sirve para mostrar
+  el análisis sin exponer la cara ni el cuerpo del trabajador.
+- --video-superpuesto: el video original con el esqueleto, los ángulos y el
+  REBA encima. Muestra a la persona: usarlo sólo con su consentimiento.
+
+Si hay ffmpeg instalado, los videos se guardan en H.264 para que se vean en
+cualquier navegador o celular.
 """
 
 from __future__ import annotations
@@ -16,6 +21,8 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import shutil
+import subprocess
 from dataclasses import asdict, fields
 from pathlib import Path
 
@@ -24,30 +31,76 @@ import numpy as np
 
 from .esqueleto import Angulos, Esqueleto, calcular_angulos, elegir_lado
 from .informe import Cuadro, armar_informe, informe_markdown
+from .levantamiento import ALCANCE_BAJO, clasificar_tecnica
 from .pose import crear_modelo
-from .reba import AGARRES, Condiciones
+from .reba import AGARRES, Condiciones, calcular_reba
 
 _HUESOS = (
     ("hombro", "codo"), ("codo", "muneca"), ("muneca", "indice"),
     ("hombro", "cadera"), ("cadera", "rodilla"), ("rodilla", "tobillo"), ("hombro", "oreja"),
 )
 
+# Color del texto del REBA según el nivel (BGR).
+_COLOR_NIVEL = {
+    "inapreciable": (120, 220, 120), "bajo": (120, 220, 120), "medio": (0, 210, 255),
+    "alto": (60, 60, 255), "muy alto": (60, 60, 255),
+}
 
-def _dibujar_esqueleto(e: Esqueleto | None, lado: str | None, alto: int, ancho: int, texto: str) -> np.ndarray:
-    lienzo = np.zeros((alto, ancho, 3), np.uint8)
+
+def _dibujar(lienzo: np.ndarray, e: Esqueleto | None, lado: str | None,
+             angulos: Angulos | None, condiciones: Condiciones, tiempo_s: float) -> np.ndarray:
     if e is not None and lado is not None:
         s = "_izq" if lado == "izq" else "_der"
         for a, b in _HUESOS:
             pa, pb = e.punto(a + s), e.punto(b + s)
             if pa and pb:
-                cv2.line(lienzo, tuple(map(int, pa)), tuple(map(int, pb)), (0, 220, 255), 3)
-    cv2.putText(lienzo, texto, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.line(lienzo, tuple(map(int, pa)), tuple(map(int, pb)), (0, 230, 255), 3)
+
+    lineas = [(f"{tiempo_s:.1f} s", (255, 255, 255))]
+    reba = calcular_reba(angulos, condiciones) if angulos else None
+    if reba is None:
+        lineas.append(("sin postura", (200, 200, 200)))
+    else:
+        lineas.append((f"tronco {angulos.tronco:.0f}  rodilla {_g(angulos.rodilla)}", (255, 255, 255)))
+        lineas.append((f"REBA {reba.puntaje} ({reba.nivel})", _COLOR_NIVEL[reba.nivel]))
+        if (angulos.muneca_sobre_piso is not None and angulos.muneca_sobre_piso < ALCANCE_BAJO
+                and angulos.rodilla is not None):
+            tecnica = clasificar_tecnica(angulos.tronco, angulos.rodilla)
+            color = (60, 60, 255) if tecnica == "con la espalda" else (120, 220, 120)
+            lineas.append((f"levanta {tecnica}", color))
+
+    escala = max(0.5, lienzo.shape[1] / 700)
+    alto_linea = int(32 * escala)
+    cv2.rectangle(lienzo, (0, 0), (lienzo.shape[1], alto_linea * len(lineas) + 10), (0, 0, 0), -1)
+    for i, (texto, color) in enumerate(lineas):
+        cv2.putText(lienzo, texto, (8, alto_linea * (i + 1)), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.8 * escala, color, max(1, int(2 * escala)))
     return lienzo
 
 
+def _g(valor: float | None) -> str:
+    return "-" if valor is None else f"{valor:.0f}"
+
+
+def _a_h264(ruta: Path) -> None:
+    """Re-codifica a H.264: OpenCV escribe mp4v, que muchos navegadores no reproducen."""
+    if shutil.which("ffmpeg") is None:
+        return
+    temporal = ruta.with_name(ruta.stem + "_h264.mp4")
+    resultado = subprocess.run(
+        ["ffmpeg", "-v", "error", "-y", "-i", str(ruta), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-movflags", "+faststart", str(temporal)],
+        check=False,
+    )
+    if resultado.returncode == 0:
+        temporal.replace(ruta)
+
+
 def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: float = 10.0,
-                   video_esqueleto: str | None = None) -> tuple[list[Cuadro], float, str | None]:
+                   condiciones: Condiciones | None = None, video_esqueleto: str | None = None,
+                   video_superpuesto: str | None = None) -> tuple[list[Cuadro], float, str | None]:
     """Devuelve los cuadros analizados, los cuadros por segundo efectivos y el lado usado."""
+    condiciones = condiciones or Condiciones()
     captura = cv2.VideoCapture(ruta)
     if not captura.isOpened():
         raise SystemExit(f"No se pudo abrir el video: {ruta}")
@@ -55,7 +108,9 @@ def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: f
     paso = max(1, int(round(fps_video / cuadros_por_segundo)))
     fps_efectivo = fps_video / paso
 
-    escritor, cuadros, lado_usado = None, [], None if lado == "auto" else lado
+    salidas = [r for r in (video_esqueleto, video_superpuesto) if r]
+    escritores: dict[str, cv2.VideoWriter] = {}
+    cuadros, lado_usado = [], None if lado == "auto" else lado
     indice = 0
     while True:
         ok, imagen = captura.read()
@@ -74,18 +129,19 @@ def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: f
             angulos = calcular_angulos(esqueleto, lado_usado)
         cuadros.append(Cuadro(tiempo_ms / 1000.0, angulos))
 
-        if video_esqueleto:
-            alto, ancho = imagen.shape[:2]
-            if escritor is None:
-                escritor = cv2.VideoWriter(video_esqueleto, cv2.VideoWriter_fourcc(*"mp4v"),
-                                           fps_efectivo, (ancho, alto))
-            tronco = f"tronco {angulos.tronco:.0f}" if angulos and angulos.tronco is not None else "sin postura"
-            escritor.write(_dibujar_esqueleto(esqueleto, lado_usado, alto, ancho,
-                                              f"{tiempo_ms / 1000:.1f}s  {tronco}"))
+        alto, ancho = imagen.shape[:2]
+        for salida in salidas:
+            if salida not in escritores:
+                escritores[salida] = cv2.VideoWriter(salida, cv2.VideoWriter_fourcc(*"mp4v"),
+                                                     fps_efectivo, (ancho, alto))
+            fondo = imagen.copy() if salida == video_superpuesto else np.zeros_like(imagen)
+            escritores[salida].write(_dibujar(fondo, esqueleto, lado_usado, angulos,
+                                              condiciones, tiempo_ms / 1000.0))
         indice += 1
     captura.release()
-    if escritor is not None:
+    for salida, escritor in escritores.items():
         escritor.release()
+        _a_h264(Path(salida))
     return cuadros, fps_efectivo, lado_usado
 
 
@@ -118,18 +174,24 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--puesto", default="", help="nombre del puesto, para el informe")
     p.add_argument("--video-esqueleto", action="store_true",
                    help="guardar un video con sólo el esqueleto sobre fondo negro")
+    p.add_argument("--video-superpuesto", action="store_true",
+                   help="guardar el video original con el esqueleto y el REBA encima (muestra a la persona)")
     args = p.parse_args(argv)
 
     video = Path(args.video)
     salida = Path(args.salida or f"{video.with_suffix('')}_ergonomia")
     salida.mkdir(parents=True, exist_ok=True)
 
-    modelo = crear_modelo(args.modelo, args.ruta_modelo)
-    cuadros, fps, lado = analizar_video(
-        str(video), modelo, args.lado, args.cuadros_por_segundo,
-        str(salida / "esqueleto.mp4") if args.video_esqueleto else None,
-    )
     condiciones = Condiciones(args.carga_kg, args.golpes, args.agarre, args.un_pie)
+    modelo = crear_modelo(args.modelo, args.ruta_modelo)
+    try:
+        cuadros, fps, lado = analizar_video(
+            str(video), modelo, args.lado, args.cuadros_por_segundo, condiciones,
+            str(salida / "esqueleto.mp4") if args.video_esqueleto else None,
+            str(salida / "superpuesto.mp4") if args.video_superpuesto else None,
+        )
+    finally:
+        modelo.cerrar()
     datos = {"Video": video.name, "Puesto": args.puesto or "(sin nombre)",
              "Modelo de pose": args.modelo, "Lado analizado": lado or "sin persona detectada"}
     informe = armar_informe(cuadros, fps, condiciones, datos)

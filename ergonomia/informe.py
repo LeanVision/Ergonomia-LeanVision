@@ -1,7 +1,8 @@
 """Junta los cuadros analizados en un informe para el evaluador.
 
-El informe es un BORRADOR de evidencias para las planillas 2.D
-(bipedestación), 2.E (movimientos repetitivos) y 2.F (posturas forzadas) del
+El informe es un BORRADOR de evidencias para las planillas 2.A
+(levantamiento), 2.D (bipedestación), 2.E (movimientos repetitivos) y 2.F
+(posturas forzadas) del
 Protocolo de Ergonomía (Res. SRT 886/2015). No reproduce las planillas
 oficiales: aporta las mediciones para que el profesional las complete y firme.
 """
@@ -13,6 +14,7 @@ from dataclasses import asdict, dataclass
 import numpy as np
 
 from .esqueleto import Angulos
+from .levantamiento import detectar_alcances
 from .reba import NIVELES, Condiciones, calcular_reba
 from .repeticiones import Repeticiones, analizar_repeticiones
 
@@ -97,14 +99,17 @@ def armar_informe(cuadros: list[Cuadro], fps: float, condiciones: Condiciones,
             "tronco_flexion_mas_60": pct("tronco", lambda v: v > 60),
             "tronco_extension": pct("tronco", lambda v: v < -5),
             "cuello_flexion_mas_20_o_extension": pct("cuello", lambda v: v > 20 or v < -5),
-            "brazo_elevado_mas_45": pct("brazo", lambda v: v > 45),
-            "brazo_elevado_mas_90": pct("brazo", lambda v: v > 90),
+            # Respecto del tronco, como mide REBA: agachado con los brazos
+            # colgando, el brazo queda a ~90° del tronco aunque no lo levante.
+            "brazo_mas_45_del_tronco": pct("brazo", lambda v: v > 45),
+            "brazo_mas_90_del_tronco": pct("brazo", lambda v: v > 90),
             "muneca_desvio_mas_15": pct("muneca", lambda v: v > 15),
             "rodilla_flexion_mas_60": pct("rodilla", lambda v: v > 60),
             "manos_sobre_hombros": pct("altura_muneca", lambda v: v > 1.0),
         },
         "postura_estatica_mas_larga_s": round(estatica_s, 1),
         "repeticiones": [asdict(r) for r in repeticiones],
+        "levantamientos": [asdict(a) for a in detectar_alcances(cuadros)],
         "bipedestacion": {
             "porcentaje_de_pie": round(_porcentaje(de_pie), 1) if de_pie else None,
             "minutos_de_pie": round(sum(de_pie) / fps / 60.0, 1) if de_pie and fps > 0 else None,
@@ -154,6 +159,28 @@ def informe_markdown(inf: dict) -> str:
         lineas.append(f"| {nombre} ({accion}) | {_f(r['porcentaje_por_nivel'][nombre], ' %')} |")
     lineas += [
         "",
+        "## Borrador para la planilla 2.A – Levantamiento y descenso manual de cargas",
+        "",
+    ]
+    levantamientos = inf["levantamientos"]
+    if levantamientos:
+        con_espalda = sum(1 for x in levantamientos if x["tecnica"] == "con la espalda")
+        lineas += [
+            f"Se detectaron **{len(levantamientos)}** momentos con las manos cerca del piso; "
+            f"**{con_espalda}** con la espalda doblada y las piernas casi rectas (técnica a corregir).",
+            "",
+            "| Momento | Tronco | Rodillas | Técnica |",
+            "|---|---|---|---|",
+        ]
+        lineas += [f"| {x['inicio_s']:.1f}–{x['fin_s']:.1f} s | {x['tronco']:.0f}° | {x['rodilla']:.0f}° | {x['tecnica']} |"
+                   for x in levantamientos]
+    else:
+        lineas.append("No se detectaron momentos con las manos cerca del piso.")
+    lineas += [
+        "",
+        "Ángulos en el punto más bajo de cada momento. **A completar por el evaluador:** "
+        "peso de la carga, frecuencia en la jornada y distancia horizontal de agarre.",
+        "",
         "## Borrador para la planilla 2.F – Posturas forzadas",
         "",
         "| Postura | % del tiempo |",
@@ -162,8 +189,8 @@ def informe_markdown(inf: dict) -> str:
         f"| Tronco flexionado más de 60° | {_f(p['tronco_flexion_mas_60'], ' %')} |",
         f"| Tronco en extensión | {_f(p['tronco_extension'], ' %')} |",
         f"| Cuello flexionado más de 20° o en extensión | {_f(p['cuello_flexion_mas_20_o_extension'], ' %')} |",
-        f"| Brazo elevado más de 45° | {_f(p['brazo_elevado_mas_45'], ' %')} |",
-        f"| Brazo elevado más de 90° | {_f(p['brazo_elevado_mas_90'], ' %')} |",
+        f"| Brazo a más de 45° del tronco | {_f(p['brazo_mas_45_del_tronco'], ' %')} |",
+        f"| Brazo a más de 90° del tronco | {_f(p['brazo_mas_90_del_tronco'], ' %')} |",
         f"| Manos por encima de los hombros | {_f(p['manos_sobre_hombros'], ' %')} |",
         f"| Muñeca desviada más de 15° | {_f(p['muneca_desvio_mas_15'], ' %')} |",
         f"| Rodillas flexionadas más de 60° | {_f(p['rodilla_flexion_mas_60'], ' %')} |",
@@ -190,6 +217,7 @@ def informe_markdown(inf: dict) -> str:
         "- Cámara de costado y una sola persona en el puesto. De frente los ángulos de tronco, cuello y brazo salen subestimados.",
         "- En 2D no se miden giros ni inclinaciones laterales, abducción del brazo, hombro elevado ni desvío lateral de muñeca: no suman al REBA.",
         "- Peso de la carga, agarre y fuerza los informa el evaluador.",
+        "- REBA castiga también las rodillas muy flexionadas: un levantamiento correcto en cuclillas puede salir alto. Para la técnica, ver la sección 2.A.",
         "- El video analizado es una muestra: el evaluador decide si representa la jornada.",
     ]
     if not r["muneca_medida"]:

@@ -58,6 +58,7 @@ class Angulos:
     muneca: float | None = None      # desvío de la mano respecto del antebrazo
     rodilla: float | None = None     # flexión de rodilla (0 = pierna estirada)
     altura_muneca: float | None = None  # muñeca sobre la cadera, en largos de tronco
+    muneca_sobre_piso: float | None = None  # muñeca sobre el tobillo, en largos de tronco
     sentado: bool | None = None
 
 
@@ -134,6 +135,10 @@ def calcular_angulos(e: Esqueleto, lado: str) -> Angulos:
                 a.muneca = _flexion(codo, muneca, indice)
     if muneca is not None and largo_tronco > 0:
         a.altura_muneca = (cadera[1] - muneca[1]) / largo_tronco
+    if muneca is not None and tobillo is not None and largo_tronco > 0:
+        # Contra el tobillo y no contra la cadera: en cuclillas la cadera baja
+        # con las manos y la altura sobre la cadera no muestra que se agachó.
+        a.muneca_sobre_piso = (tobillo[1] - muneca[1]) / largo_tronco
     if rodilla is not None and tobillo is not None:
         a.rodilla = _flexion(cadera, rodilla, tobillo)
         muslo = _resta(rodilla, cadera)
