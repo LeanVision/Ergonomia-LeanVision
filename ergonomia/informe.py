@@ -18,6 +18,16 @@ from .levantamiento import detectar_alcances
 from .reba import NIVELES, Condiciones, calcular_reba
 from .repeticiones import Repeticiones, analizar_repeticiones
 
+# Hombros más separados que esto (en largos de tronco) = la persona no está
+# de costado a la cámara y sus ángulos de flexión no se miden bien. Medido en
+# videos reales: de costado da 0,0-0,3; de frente o de espaldas, 0,6-1,1.
+SEPARACION_HOMBROS_PERFIL = 0.35
+# Si el centro de la persona salta más que esto (fracción del ancho o alto de
+# la imagen) entre dos cuadros seguidos, cambió la persona seguida o la toma.
+SALTO_PERSONA = 0.15
+# Por debajo de este % de cuadros de costado, el informe avisa que no es confiable.
+PERFIL_MINIMO = 70.0
+
 # Una postura que casi no cambia durante más de esto suma 1 en la actividad REBA.
 SEGUNDOS_POSTURA_ESTATICA = 60.0
 VARIACION_ESTATICA = 10.0  # grados
@@ -27,6 +37,24 @@ VARIACION_ESTATICA = 10.0  # grados
 class Cuadro:
     tiempo_s: float
     angulos: Angulos | None  # None = no se detectó a la persona
+    centro: tuple[float, float] | None = None  # cadera, en fracción del ancho y alto de la imagen
+    cuerpo_entero: bool = True  # False = persona cortada, muy lejos o detección dudosa
+
+
+def de_perfil(a: Angulos) -> bool:
+    return a.separacion_hombros is None or a.separacion_hombros <= SEPARACION_HOMBROS_PERFIL
+
+
+def contar_saltos(cuadros: list[Cuadro]) -> int:
+    """Veces que el centro de la persona salta de golpe: otra persona u otra toma."""
+    saltos, anterior = 0, None
+    for c in cuadros:
+        if c.centro is None:
+            continue
+        if anterior is not None and max(abs(c.centro[0] - anterior[0]), abs(c.centro[1] - anterior[1])) > SALTO_PERSONA:
+            saltos += 1
+        anterior = c.centro
+    return saltos
 
 
 def _porcentaje(condicion: list[bool]) -> float:
@@ -58,6 +86,13 @@ def _postura_estatica(cuadros: list[Cuadro], fps: float) -> float:
 def armar_informe(cuadros: list[Cuadro], fps: float, condiciones: Condiciones,
                   datos: dict | None = None) -> dict:
     """`fps` son los cuadros analizados por segundo (no los del video)."""
+    con_persona = [c for c in cuadros if c.angulos is not None and c.angulos.tronco is not None]
+    # Los cuadros donde la persona no está de costado se descartan: ahí la
+    # flexión de tronco, cuello y brazo sale mal medida (en un video de
+    # espaldas, un trabajador agachado daba tronco -15°).
+    cuadros_totales = cuadros
+    cuadros = [c if c.angulos is None or de_perfil(c.angulos) else Cuadro(c.tiempo_s, None, c.centro, c.cuerpo_entero)
+               for c in cuadros]
     medidos = [c.angulos for c in cuadros if c.angulos is not None and c.angulos.tronco is not None]
     duracion = len(cuadros) / fps if fps > 0 else 0.0
 
@@ -82,6 +117,12 @@ def armar_informe(cuadros: list[Cuadro], fps: float, condiciones: Condiciones,
         "duracion_s": round(duracion, 1),
         "cuadros_analizados": len(cuadros),
         "cuadros_con_postura": len(medidos),
+        "calidad": {
+            "porcentaje_de_perfil": round(100.0 * len(medidos) / len(con_persona), 1) if con_persona else None,
+            "cuadros_sin_persona": sum(1 for c in cuadros_totales if c.angulos is None and c.cuerpo_entero),
+            "cuadros_cuerpo_cortado": sum(1 for c in cuadros_totales if not c.cuerpo_entero),
+            "cambios_de_persona_o_toma": contar_saltos(cuadros_totales),
+        },
         "condiciones": asdict(condiciones),
         "reba": {
             "maximo": int(puntajes.max()) if len(puntajes) else None,
@@ -144,8 +185,33 @@ def informe_markdown(inf: dict) -> str:
         lineas.append(f"- **{clave}:** {valor}")
     lineas += [
         f"- **Duración analizada:** {_f(inf['duracion_s'], ' s')}",
-        f"- **Cuadros con la postura medida:** {inf['cuadros_con_postura']} de {inf['cuadros_analizados']}",
+        f"- **Cuadros con la postura medida (de costado):** {inf['cuadros_con_postura']} de {inf['cuadros_analizados']}",
         f"- **Carga informada:** {_f(inf['condiciones']['carga_kg'], ' kg')}, agarre {inf['condiciones']['agarre']}",
+        "",
+        "## Calidad de la toma",
+        "",
+    ]
+    calidad = inf["calidad"]
+    perfil = calidad["porcentaje_de_perfil"]
+    avisos = []
+    if perfil is None:
+        avisos.append("no se detectó a ninguna persona")
+    elif perfil < PERFIL_MINIMO:
+        avisos.append(f"la persona está de costado sólo en el {perfil:.0f} % de los cuadros con persona")
+    if calidad["cambios_de_persona_o_toma"]:
+        avisos.append(f"la persona seguida o la toma cambió {calidad['cambios_de_persona_o_toma']} veces")
+    if avisos:
+        lineas += [
+            "**ATENCIÓN: resultados poco confiables.** " + "; ".join(avisos).capitalize() + ". "
+            "Para evaluar hace falta una toma fija, de costado, con una sola persona y el cuerpo entero.",
+            "",
+        ]
+    lineas += [
+        f"- **De costado a la cámara:** {_f(perfil, ' %')} de los cuadros con persona "
+        "(sólo esos se usan para los ángulos)",
+        f"- **Cuadros sin persona detectada:** {calidad['cuadros_sin_persona']}",
+        f"- **Cuadros descartados por cuerpo cortado, persona muy lejos o postura imposible:** {calidad['cuadros_cuerpo_cortado']}",
+        f"- **Cambios bruscos de persona o de toma:** {calidad['cambios_de_persona_o_toma']}",
         "",
         "## REBA",
         "",

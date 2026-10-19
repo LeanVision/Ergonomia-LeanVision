@@ -29,7 +29,8 @@ python -m ergonomia.analizar video.mp4 --puesto "Embalaje línea 2" --carga-kg 8
 
 Deja en `video_ergonomia/`:
 
-- `informe.md`: el informe para leer.
+- `informe.pdf`: el informe para leer o imprimir (necesita `fpdf2`).
+- `informe.md`: el mismo informe en texto.
 - `informe.json`: los mismos datos, para procesarlos.
 - `angulos.csv`: los ángulos cuadro por cuadro.
 - `esqueleto.mp4`, sólo con `--video-esqueleto`: el esqueleto sobre fondo negro, para mostrar el análisis sin mostrar a la persona.
@@ -45,6 +46,20 @@ Opciones útiles: `--lado izq|der` si la detección automática del lado que mir
 - `--modelo mediapipe --ruta-modelo pose_landmarker_full.task`: MediaPipe Pose Landmarker. Sí mide la muñeca. El archivo se baja de la [página de MediaPipe Pose Landmarker](https://ai.google.dev/edge/mediapipe/solutions/vision/pose_landmarker#models).
 
 Todo corre local: el video no sale de la máquina y sus cuadros no se guardan.
+
+## Controles de calidad de la toma
+
+El informe empieza con una sección **"Calidad de la toma"** y avisa en
+**ATENCIÓN** cuando los resultados no son confiables. Sólo se usan para los
+ángulos los cuadros que pasan estos controles:
+
+- **De costado:** de costado los dos hombros se superponen en la imagen; de frente o de espaldas quedan separados. Los cuadros que no están de costado se descartan, porque ahí la flexión de tronco, cuello y brazo sale mal medida. Si quedan menos del 70 %, aviso.
+- **Cuerpo entero y a buena distancia:** se descartan primeros planos donde no se ven las piernas (el modelo las inventa) y personas tan lejos que el tronco ocupa menos del 6 % del alto de la imagen.
+- **Postura posible:** se descartan esqueletos absurdos, como la cadera por encima de los hombros.
+- **Cambios de persona o de toma:** cuenta los saltos bruscos del esqueleto (cortes de cámara, o el modelo que pasa a seguir a otra persona) y avisa si hay alguno.
+
+Los videos que OpenCV no lee (por ejemplo AV1, el formato de muchas descargas
+de YouTube) se convierten solos si hay `ffmpeg` instalado.
 
 ## Limitaciones
 

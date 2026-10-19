@@ -57,6 +57,7 @@ def test_de_punta_a_punta(tmp_path, monkeypatch):
     assert 14 <= codo["ciclos"] <= 15
     assert inf["reba"]["actividad_sumada"] == 1  # más de 4 por minuto
     assert (salida / "informe.md").exists()
+    assert (salida / "informe.pdf").exists()
     assert (salida / "esqueleto.mp4").stat().st_size > 0
     assert (salida / "superpuesto.mp4").stat().st_size > 0
     assert len((salida / "angulos.csv").read_text().splitlines()) == 301
