@@ -4,6 +4,7 @@ Asistente para el **Protocolo de Ergonomía de la Resolución SRT 886/2015**. A
 partir de un video del puesto de trabajo, estima la postura del trabajador
 (su "esqueleto") y arma un **borrador de evidencias** para las planillas:
 
+- **2.A Levantamiento y descenso de cargas:** cada vez que las manos bajan cerca del piso, si la persona se agachó **con la espalda** (tronco doblado, piernas rectas: técnica a corregir), **con las piernas** (en cuclillas) o de forma **mixta**.
 - **2.F Posturas forzadas:** % del tiempo con el tronco, el cuello, los brazos, la muñeca y las rodillas en posturas de riesgo, más el puntaje **REBA** por cuadro.
 - **2.E Movimientos repetitivos:** ciclos por minuto, duración del ciclo, % del tiempo en movimiento y un **Nivel de Actividad Manual estimado** (ecuación de Radwin, 2015).
 - **2.D Bipedestación:** tiempo de pie.
@@ -32,6 +33,9 @@ Deja en `video_ergonomia/`:
 - `informe.json`: los mismos datos, para procesarlos.
 - `angulos.csv`: los ángulos cuadro por cuadro.
 - `esqueleto.mp4`, sólo con `--video-esqueleto`: el esqueleto sobre fondo negro, para mostrar el análisis sin mostrar a la persona.
+- `superpuesto.mp4`, sólo con `--video-superpuesto`: el video original con el esqueleto, los ángulos, el REBA y la técnica de levantamiento encima. **Muestra a la persona:** usarlo sólo con su consentimiento.
+
+Si hay `ffmpeg` instalado, los videos se guardan en H.264 para que se vean en cualquier navegador o celular.
 
 Opciones útiles: `--lado izq|der` si la detección automática del lado que mira a la cámara falla, `--golpes`, `--un-pie`, `--cuadros-por-segundo`.
 
@@ -46,6 +50,7 @@ Todo corre local: el video no sale de la máquina y sus cuadros no se guardan.
 
 - Ángulos en 2D: no se miden giros ni inclinaciones laterales, abducción del brazo, hombro elevado ni desvío lateral de la muñeca. Esas partes del REBA no suman.
 - El peso de la carga, el agarre y la fuerza percibida (escala de Borg) los informa quien evalúa.
+- REBA castiga también las rodillas muy flexionadas, así que un levantamiento correcto en cuclillas puede salir con puntaje alto. Para juzgar la técnica de levantamiento está la sección 2.A.
 - Factores que una cámara no mide (vibraciones, confort térmico) quedan fuera.
 - Antes de usarlo en una evaluación real hay que **validarlo** contra la evaluación manual de un ergónomo en algunos puestos.
 
@@ -54,7 +59,8 @@ Todo corre local: el video no sale de la máquina y sus cuadros no se guardan.
 Filmar trabajadores es tratamiento de datos personales (Ley 25.326) y un
 control del empleador (art. 70 de la Ley de Contrato de Trabajo): avisar a
 los trabajadores, filmar sólo lo necesario y borrar el video original después
-del análisis. El informe y el CSV no contienen imágenes.
+del análisis. El informe, el CSV y el video del esqueleto no contienen
+imágenes de la persona; el video superpuesto sí.
 
 ## Pruebas
 
