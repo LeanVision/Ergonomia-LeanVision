@@ -59,6 +59,11 @@ class Angulos:
     rodilla: float | None = None     # flexión de rodilla (0 = pierna estirada)
     altura_muneca: float | None = None  # muñeca sobre la cadera, en largos de tronco
     muneca_sobre_piso: float | None = None  # muñeca sobre el tobillo, en largos de tronco
+    # Distancia horizontal entre los dos hombros, en largos de tronco. De
+    # costado los hombros se superponen (cerca de 0); de frente o de
+    # espaldas quedan separados (más de 0,5). Sirve para avisar que los
+    # ángulos de flexión no son confiables.
+    separacion_hombros: float | None = None
     sentado: bool | None = None
 
 
@@ -75,6 +80,33 @@ def _angulo_firmado(desde, hacia) -> float:
 def _flexion(a, vertice, b) -> float:
     """180 menos el ángulo interior en `vertice`: 0 = segmentos alineados."""
     return 180.0 - abs(_angulo_firmado(_resta(a, vertice), _resta(b, vertice)))
+
+
+# Para confiar en un cuadro hace falta ver el cuerpo entero y a un tamaño
+# razonable. Medido en videos reales: con la persona entera en cuadro el
+# tronco ocupa 15-20 % del alto de la imagen y las piernas salen con
+# confianza 0,8-1,0; en primeros planos los tobillos bajan a ~0,3 (el modelo
+# los inventa) y en detecciones falsas sobre objetos el tronco mide 2-3 %.
+TRONCO_MINIMO = 0.06    # largo del tronco, en fracción del alto de la imagen
+CONFIANZA_PIERNAS = 0.5
+
+
+def cuerpo_entero(e: Esqueleto, alto_imagen: int) -> bool:
+    """Cuerpo entero a la vista y no demasiado lejos (la pierna más visible alcanza)."""
+    def conf(nombre):
+        return e.puntos.get(nombre, (0, 0, 0.0))[2]
+
+    piernas = any(min(conf("rodilla" + s), conf("tobillo" + s)) >= CONFIANZA_PIERNAS for s in ("_izq", "_der"))
+    # Largo real y no sólo vertical: agachado a 90° el tronco queda horizontal.
+    largos = [math.dist(e.punto("hombro" + s), e.punto("cadera" + s))
+              for s in ("_izq", "_der") if e.punto("hombro" + s) and e.punto("cadera" + s)]
+    return piernas and bool(largos) and max(largos) >= TRONCO_MINIMO * alto_imagen
+
+
+def postura_posible(a: Angulos) -> bool:
+    """Descarta esqueletos imposibles al trabajar, como la cadera por encima de
+    los hombros (tronco cerca de ±180°): son errores del modelo de pose."""
+    return a.tronco is None or -60.0 <= a.tronco <= 150.0
 
 
 def elegir_lado(esqueleto: Esqueleto) -> str:
@@ -103,6 +135,11 @@ def calcular_angulos(e: Esqueleto, lado: str) -> Angulos:
     derecha = _mira_a_la_derecha(e, hombro, cadera, s)
     if derecha is None:
         return Angulos()
+    hombro_izq, hombro_der = e.punto("hombro_izq"), e.punto("hombro_der")
+    largo = math.hypot(hombro[0] - cadera[0], hombro[1] - cadera[1])
+    separacion = (abs(hombro_izq[0] - hombro_der[0]) / largo
+                  if hombro_izq is not None and hombro_der is not None and largo > 0 else None)
+
     # Si mira a la izquierda, se espeja en x: así "adelante" siempre es +x y
     # una flexión es siempre un giro en el mismo sentido.
     signo_x = 1.0 if derecha else -1.0
@@ -118,7 +155,7 @@ def calcular_angulos(e: Esqueleto, lado: str) -> Angulos:
     arriba = (0.0, -1.0)
     tronco_vec = _resta(hombro, cadera)
     largo_tronco = math.hypot(*tronco_vec)
-    a = Angulos()
+    a = Angulos(separacion_hombros=separacion)
     # Con y hacia abajo y "adelante" = +x, un giro desde arriba hacia
     # adelante da ángulo positivo: es la flexión.
     a.tronco = _angulo_firmado(arriba, tronco_vec)

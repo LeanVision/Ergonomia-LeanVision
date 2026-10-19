@@ -4,5 +4,6 @@ opencv-python
 # Modelo de pose: alcanza con uno de los dos.
 ultralytics   # --modelo yolo (por defecto); baja yolo11n-pose.pt la primera vez
 # mediapipe   # --modelo mediapipe; necesita el archivo .task (ver README)
+fpdf2         # informe en PDF
 # Para correr las pruebas.
 pytest

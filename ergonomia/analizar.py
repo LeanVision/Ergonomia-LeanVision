@@ -4,8 +4,9 @@ Uso (desde la raíz del repo):
 
     python -m ergonomia.analizar video.mp4 --carga-kg 8 --agarre regular
 
-Deja en la carpeta de salida informe.md (para leer), informe.json (para
-procesar) y angulos.csv (ángulos cuadro por cuadro). Opcionalmente:
+Deja en la carpeta de salida informe.pdf (para leer o imprimir; necesita
+fpdf2), informe.md (el mismo texto), informe.json (para procesar) y
+angulos.csv (ángulos cuadro por cuadro). Opcionalmente:
 
 - --video-esqueleto: SOLO el esqueleto sobre fondo negro. Sirve para mostrar
   el análisis sin exponer la cara ni el cuerpo del trabajador.
@@ -13,7 +14,8 @@ procesar) y angulos.csv (ángulos cuadro por cuadro). Opcionalmente:
   REBA encima. Muestra a la persona: usarlo sólo con su consentimiento.
 
 Si hay ffmpeg instalado, los videos se guardan en H.264 para que se vean en
-cualquier navegador o celular.
+cualquier navegador o celular, y se pueden analizar videos en formatos que
+OpenCV no lee (AV1, el de muchas descargas de YouTube).
 """
 
 from __future__ import annotations
@@ -23,15 +25,17 @@ import csv
 import json
 import shutil
 import subprocess
+import tempfile
 from dataclasses import asdict, fields
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-from .esqueleto import Angulos, Esqueleto, calcular_angulos, elegir_lado
+from .esqueleto import Angulos, Esqueleto, calcular_angulos, cuerpo_entero, elegir_lado, postura_posible
 from .informe import Cuadro, armar_informe, informe_markdown
 from .levantamiento import ALCANCE_BAJO, clasificar_tecnica
+from .pdf import guardar_pdf
 from .pose import crear_modelo
 from .reba import AGARRES, Condiciones, calcular_reba
 
@@ -96,14 +100,34 @@ def _a_h264(ruta: Path) -> None:
         temporal.replace(ruta)
 
 
+def _abrir_video(ruta: str) -> tuple[cv2.VideoCapture, Path | None]:
+    """Abre el video; si OpenCV no lo puede leer, lo convierte a H.264 con ffmpeg.
+
+    Devuelve también el archivo temporal convertido, para borrarlo al final.
+    """
+    captura = cv2.VideoCapture(ruta)
+    if captura.isOpened() and captura.read()[0]:
+        captura.set(cv2.CAP_PROP_POS_FRAMES, 0)
+        return captura, None
+    captura.release()
+    if shutil.which("ffmpeg") is None:
+        raise SystemExit(f"No se pudo leer el video: {ruta} (instalar ffmpeg permite leer más formatos, como AV1)")
+    temporal = Path(tempfile.mkstemp(suffix=".mp4")[1])
+    resultado = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", ruta, "-an", "-c:v", "libx264",
+                                "-pix_fmt", "yuv420p", str(temporal)], check=False)
+    captura = cv2.VideoCapture(str(temporal))
+    if resultado.returncode != 0 or not captura.isOpened():
+        temporal.unlink(missing_ok=True)
+        raise SystemExit(f"No se pudo leer ni convertir el video: {ruta}")
+    return captura, temporal
+
+
 def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: float = 10.0,
                    condiciones: Condiciones | None = None, video_esqueleto: str | None = None,
                    video_superpuesto: str | None = None) -> tuple[list[Cuadro], float, str | None]:
     """Devuelve los cuadros analizados, los cuadros por segundo efectivos y el lado usado."""
     condiciones = condiciones or Condiciones()
-    captura = cv2.VideoCapture(ruta)
-    if not captura.isOpened():
-        raise SystemExit(f"No se pudo abrir el video: {ruta}")
+    captura, convertido = _abrir_video(ruta)
     fps_video = captura.get(cv2.CAP_PROP_FPS) or 30.0
     paso = max(1, int(round(fps_video / cuadros_por_segundo)))
     fps_efectivo = fps_video / paso
@@ -121,15 +145,24 @@ def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: f
             continue
         tiempo_ms = int(indice * 1000 / fps_video)
         esqueleto = modelo.estimar(imagen, tiempo_ms)
-        angulos = None
+        alto, ancho = imagen.shape[:2]
+        angulos, centro, entero = None, None, True
+        if esqueleto is not None and not cuerpo_entero(esqueleto, alto):
+            # Primer plano, persona cortada o detección falsa sobre un objeto:
+            # los ángulos saldrían inventados. No se mide ni se dibuja.
+            esqueleto, entero = None, False
         if esqueleto is not None:
             # El lado se fija con el primer cuadro con persona: cambiarlo en
             # medio del video mezclaría los dos brazos en la misma serie.
             lado_usado = lado_usado or elegir_lado(esqueleto)
             angulos = calcular_angulos(esqueleto, lado_usado)
-        cuadros.append(Cuadro(tiempo_ms / 1000.0, angulos))
+            if not postura_posible(angulos):
+                esqueleto, angulos, entero = None, None, False
+            cadera = esqueleto and (esqueleto.punto("cadera_izq") or esqueleto.punto("cadera_der"))
+            if cadera:
+                centro = (cadera[0] / ancho, cadera[1] / alto)
+        cuadros.append(Cuadro(tiempo_ms / 1000.0, angulos, centro, entero))
 
-        alto, ancho = imagen.shape[:2]
         for salida in salidas:
             if salida not in escritores:
                 escritores[salida] = cv2.VideoWriter(salida, cv2.VideoWriter_fourcc(*"mp4v"),
@@ -139,6 +172,8 @@ def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: f
                                               condiciones, tiempo_ms / 1000.0))
         indice += 1
     captura.release()
+    if convertido is not None:
+        convertido.unlink(missing_ok=True)
     for salida, escritor in escritores.items():
         escritor.release()
         _a_h264(Path(salida))
@@ -197,7 +232,10 @@ def main(argv: list[str] | None = None) -> None:
     informe = armar_informe(cuadros, fps, condiciones, datos)
 
     (salida / "informe.json").write_text(json.dumps(informe, ensure_ascii=False, indent=2), encoding="utf-8")
-    (salida / "informe.md").write_text(informe_markdown(informe), encoding="utf-8")
+    texto = informe_markdown(informe)
+    (salida / "informe.md").write_text(texto, encoding="utf-8")
+    if not guardar_pdf(texto, salida / "informe.pdf"):
+        print("Para tener el informe en PDF: pip install fpdf2")
     guardar_csv(cuadros, salida / "angulos.csv")
     print(f"Informe en {salida / 'informe.md'}")
 
