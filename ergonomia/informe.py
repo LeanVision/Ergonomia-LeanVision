@@ -278,6 +278,11 @@ def informe_markdown(inf: dict) -> str:
         f"- **De pie:** {_f(b['porcentaje_de_pie'], ' %')} del tiempo analizado "
         f"({_f(b['minutos_de_pie'], ' min')})",
         "",
+        "La planilla 2.D pregunta por DOS horas seguidas de pie, por TRES con "
+        "deambulación de menos de 100 m/h y por DOS con portación de cargas: "
+        "sobre un video de unos minutos eso no se puede contestar. Para medir "
+        "la jornada completa, `python -m ergonomia.jornada`.",
+        "",
         "## Limitaciones",
         "",
         "- Cámara de costado y una sola persona en el puesto. De frente los ángulos de tronco, cuello y brazo salen subestimados.",

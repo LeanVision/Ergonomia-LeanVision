@@ -127,6 +127,39 @@ def _mira_a_la_derecha(e: Esqueleto, hombro, cadera, s: str) -> bool | None:
     return None
 
 
+@dataclass
+class Medicion:
+    """Lo medible de un cuadro, ya pasado por los controles de calidad."""
+
+    esqueleto: Esqueleto | None = None  # None = no se mide ni se dibuja
+    angulos: Angulos | None = None
+    centro: tuple[float, float] | None = None  # cadera, en fracción del ancho y alto
+    cuerpo_entero: bool = True
+    lado: str | None = None
+
+
+def medir_cuadro(e: Esqueleto | None, alto: int, ancho: int, lado: str | None) -> Medicion:
+    """Aplica los controles de calidad a un cuadro y devuelve lo medible.
+
+    `lado` se pasa fijo entre cuadros: elegirlo de nuevo en medio de una serie
+    mezclaría los dos brazos. Con None se elige el que mira a la cámara.
+    """
+    if e is None:
+        return Medicion(lado=lado)
+    if not cuerpo_entero(e, alto):
+        # Primer plano, persona cortada o detección falsa sobre un objeto: los
+        # ángulos saldrían inventados.
+        return Medicion(cuerpo_entero=False, lado=lado)
+
+    lado = lado or elegir_lado(e)
+    angulos = calcular_angulos(e, lado)
+    if not postura_posible(angulos):
+        return Medicion(cuerpo_entero=False, lado=lado)
+    cadera = e.punto("cadera_izq") or e.punto("cadera_der")
+    centro = (cadera[0] / ancho, cadera[1] / alto) if cadera else None
+    return Medicion(e, angulos, centro, True, lado)
+
+
 def calcular_angulos(e: Esqueleto, lado: str) -> Angulos:
     s = "_izq" if lado == "izq" else "_der"
     hombro, cadera = e.punto("hombro" + s), e.punto("cadera" + s)

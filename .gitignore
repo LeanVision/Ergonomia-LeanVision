@@ -8,3 +8,7 @@ __pycache__/
 *.mp4
 *.mov
 *_ergonomia/
+
+# Mediciones del modo jornada: un resumen por minuto y por puesto. Son datos
+# del despliegue, no del repositorio.
+jornada/

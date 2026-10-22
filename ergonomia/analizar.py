@@ -32,7 +32,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .esqueleto import Angulos, Esqueleto, calcular_angulos, cuerpo_entero, elegir_lado, postura_posible
+from .esqueleto import Angulos, Esqueleto, medir_cuadro
 from .informe import Cuadro, armar_informe, informe_markdown
 from .levantamiento import ALCANCE_BAJO, clasificar_tecnica
 from .pdf import guardar_pdf
@@ -144,24 +144,12 @@ def analizar_video(ruta: str, modelo, lado: str = "auto", cuadros_por_segundo: f
             indice += 1
             continue
         tiempo_ms = int(indice * 1000 / fps_video)
-        esqueleto = modelo.estimar(imagen, tiempo_ms)
         alto, ancho = imagen.shape[:2]
-        angulos, centro, entero = None, None, True
-        if esqueleto is not None and not cuerpo_entero(esqueleto, alto):
-            # Primer plano, persona cortada o detección falsa sobre un objeto:
-            # los ángulos saldrían inventados. No se mide ni se dibuja.
-            esqueleto, entero = None, False
-        if esqueleto is not None:
-            # El lado se fija con el primer cuadro con persona: cambiarlo en
-            # medio del video mezclaría los dos brazos en la misma serie.
-            lado_usado = lado_usado or elegir_lado(esqueleto)
-            angulos = calcular_angulos(esqueleto, lado_usado)
-            if not postura_posible(angulos):
-                esqueleto, angulos, entero = None, None, False
-            cadera = esqueleto and (esqueleto.punto("cadera_izq") or esqueleto.punto("cadera_der"))
-            if cadera:
-                centro = (cadera[0] / ancho, cadera[1] / alto)
-        cuadros.append(Cuadro(tiempo_ms / 1000.0, angulos, centro, entero))
+        # El lado se fija con el primer cuadro con persona: cambiarlo en medio
+        # del video mezclaría los dos brazos en la misma serie.
+        medida = medir_cuadro(modelo.estimar(imagen, tiempo_ms), alto, ancho, lado_usado)
+        esqueleto, angulos, lado_usado = medida.esqueleto, medida.angulos, medida.lado
+        cuadros.append(Cuadro(tiempo_ms / 1000.0, angulos, medida.centro, medida.cuerpo_entero))
 
         for salida in salidas:
             if salida not in escritores:
