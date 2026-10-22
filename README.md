@@ -7,7 +7,7 @@ partir de un video del puesto de trabajo, estima la postura del trabajador
 - **2.A Levantamiento y descenso de cargas:** cada vez que las manos bajan cerca del piso, si la persona se agachó **con la espalda** (tronco doblado, piernas rectas: técnica a corregir), **con las piernas** (en cuclillas) o de forma **mixta**.
 - **2.F Posturas forzadas:** % del tiempo con el tronco, el cuello, los brazos, la muñeca y las rodillas en posturas de riesgo, más el puntaje **REBA** por cuadro.
 - **2.E Movimientos repetitivos:** ciclos por minuto, duración del ciclo, % del tiempo en movimiento y un **Nivel de Actividad Manual estimado** (ecuación de Radwin, 2015).
-- **2.D Bipedestación:** tiempo de pie.
+- **2.D Bipedestación:** tiempo de pie, y sobre la jornada completa (ver *Medir la jornada*) la bipedestación continua más larga y la deambulación en metros por hora.
 
 La norma pide que la evaluación la haga un profesional con conocimientos en
 ergonomía: el informe trae las mediciones y el espacio para que ese
@@ -47,6 +47,47 @@ Opciones útiles: `--lado izq|der` si la detección automática del lado que mir
 
 Todo corre local: el video no sale de la máquina y sus cuadros no se guardan.
 
+## Medir la jornada (planilla 2.D)
+
+La 2.D no se puede contestar con un video de unos minutos: pregunta por **dos
+horas seguidas** de pie sin poder sentarse, por **tres horas** con deambulación
+de menos de **100 m/h**, o por **dos horas** con portación de cargas. Para eso
+hay un segundo modo, que queda mirando el puesto todo el turno:
+
+```bash
+# Durante el turno (Ctrl-C para cortar):
+python -m ergonomia.jornada --fuente rtsp://camara/stream     --puesto "Embalaje linea 2" --ancho-escena 4
+
+# Después, el borrador del día:
+python -m ergonomia.jornada --informe --puesto "Embalaje linea 2"     --carga-kg 8 --fecha 2026-10-22
+```
+
+Deja en `jornada/<puesto>/<AAAA-MM-DD>.jsonl` **un resumen por minuto**: de
+cada cuadro sólo se guarda si la persona estaba de pie y cuánto se movió. Una
+jornada de 8 h a 2 cuadros por segundo son 57.600 cuadros pero 480 líneas, y
+con eso alcanza para la planilla. No se guarda ni video ni cuadros.
+
+`--informe` escribe al lado el `.md` y el `.json` con la corrida de
+bipedestación más larga, la deambulación de la hora más quieta y las respuestas
+de los pasos 1, 2.1 y 2.2.
+
+Dos cosas que decide el evaluador y la cámara no puede ver:
+
+- `--hay-silla`: la cámara ve que el trabajador no se sienta, no si **no puede**
+  sentarse, que es lo que pregunta el Paso 1.
+- `--carga-kg`: el peso que manipula de forma habitual (Paso 2.2).
+
+Y dos detalles de la medición:
+
+- `--ancho-escena` son los metros reales que abarca el ancho de la imagen. Sin
+  ese dato no hay metros y la deambulación queda **sin medir**, que es mejor que
+  un número inventado.
+- Un minuto que la pose no pudo medir **corta** la bipedestación continua, y lo
+  mismo los minutos que falten en el archivo si el proceso estuvo caído: no se
+  puede declarar continuo lo que nadie midió.
+
+A 2 cuadros por segundo alcanza: la 2.D habla de horas, no de instantes.
+
 ## Controles de calidad de la toma
 
 El informe empieza con una sección **"Calidad de la toma"** y avisa en
@@ -66,6 +107,9 @@ de YouTube) se convierten solos si hay `ffmpeg` instalado.
 - Ángulos en 2D: no se miden giros ni inclinaciones laterales, abducción del brazo, hombro elevado ni desvío lateral de la muñeca. Esas partes del REBA no suman.
 - El peso de la carga, el agarre y la fuerza percibida (escala de Borg) los informa quien evalúa.
 - REBA castiga también las rodillas muy flexionadas, así que un levantamiento correcto en cuclillas puede salir con puntaje alto. Para juzgar la técnica de levantamiento está la sección 2.A.
+- Los metros de la 2.D salen del corrido horizontal de la cadera: el movimiento en profundidad no se ve en 2D, así que son un **piso** del recorrido real. Como el Paso 2.1 se dispara con POCA deambulación, el error empuja a marcar riesgo donde puede no haberlo.
+- Estar de pie o sentado sale de la orientación del muslo. De frente a la cámara el muslo se acorta en la imagen y la distinción se vuelve dudosa: otra razón para filmar de costado.
+- La carga térmica (Paso 2.3 de la 2.D) necesita termohigrómetro.
 - Factores que una cámara no mide (vibraciones, confort térmico) quedan fuera.
 - Antes de usarlo en una evaluación real hay que **validarlo** contra la evaluación manual de un ergónomo en algunos puestos.
 
