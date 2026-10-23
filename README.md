@@ -130,6 +130,33 @@ p95 del tronco no llega a 2°, el modelo más rápido sale gratis.
 Cada modelo vuelve a leer el video en vez de guardar los cuadros en memoria: en
 una Pi de 1 GB, trescientos cuadros de 1080p no entran.
 
+## Medir con la Raspberry Pi AI Camera (IMX500)
+
+La IMX500 corre la red de pose **dentro del sensor**, así que los keypoints
+salen sin costo de CPU. Es la opción para dejar una Pi midiendo el turno
+completo, sobre todo en placas chicas donde no entra un modelo en memoria.
+
+Antes de adoptarla hay que contestar una pregunta: ¿los ángulos que da el
+sensor son los mismos que los del modelo de referencia? Para eso la captura
+guarda las dos cosas del **mismo cuadro**:
+
+```bash
+# En la Pi (necesita python3-picamera2, imx500-models y munkres):
+python -m ergonomia.capturar_imx500 --salida captura --segundos 120
+
+# En una PC, con la carpeta copiada:
+python -m ergonomia.comparar captura/video.mp4     --pytorch yolo11n-pose.pt --grabada captura/keypoints.jsonl
+```
+
+Deja `video.mp4` y `keypoints.jsonl` (una línea por cuadro, con los 17 puntos
+COCO o `null` si no vio a nadie). `--grabada` hace que esos keypoints entren a
+la comparación como un modelo más, así que el informe dice cuántos grados se
+corre el tronco entre el sensor y `yolo11n-pose` sobre el mismo material.
+
+Si el p95 del tronco queda por debajo de 2°, el sensor sirve para todas las
+planillas. Si se va a 5° o más, conviene usarlo para la 2.D —que es una
+decisión gruesa, de pie o sentado— y dejar la 2.F para el análisis de video.
+
 ## Controles de calidad de la toma
 
 El informe empieza con una sección **"Calidad de la toma"** y avisa en
