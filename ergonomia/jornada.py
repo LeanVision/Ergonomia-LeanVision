@@ -42,6 +42,13 @@ from .pose import crear_modelo
 # falta más, y a esa frecuencia la pose entra en una Pi 5 sin pelear con nada.
 CUADROS_POR_SEGUNDO = 2.0
 
+# Modo mixto: uno de cada cuántos cuadros se reprocesa con el modelo de
+# control. Cincuenta es 2 % de carga extra, que una Pi absorbe sin despeinarse.
+CONTROL_CADA = 50
+# A partir de acá el desvío del tronco puede mover de banda REBA (20° y 60°) y
+# cambiar lo que se informa, así que el borrador avisa.
+DESVIO_TOLERABLE_GRADOS = 2.0
+
 
 def slug(nombre: str) -> str:
     """Normaliza un nombre a [a-z0-9_]. Devuelve "" si no queda nada.
@@ -181,27 +188,39 @@ def _cuadros_de_archivo(captura, cuadros_por_segundo: float, horas: float | None
 
 def medir_jornada(muestras, modelo, cuadros_por_segundo: float = CUADROS_POR_SEGUNDO,
                   ancho_escena_m: float = 0.0, lado: str | None = None,
-                  al_cerrar_minuto=None) -> list[Minuto]:
+                  al_cerrar_minuto=None, modelo_control=None,
+                  control_cada: int = CONTROL_CADA) -> list[Minuto]:
     """Consume (epoch, imagen) y devuelve un Minuto por cada minuto de reloj.
 
     `al_cerrar_minuto` se llama con cada minuto en cuanto se cierra, para
     escribirlo a disco sin esperar al final del turno.
+
+    Con `modelo_control`, uno de cada `control_cada` cuadros se mide también
+    con ese segundo modelo y se anota cuánto se corre el tronco. Es el modo
+    mixto: la IMX500 mide todo el turno sin tocar la CPU, y el modelo de
+    referencia reprocesa una fracción como control. Con uno de cada cincuenta,
+    el costo es 2 % y alcanza para que el desvío no pase inadvertido.
     """
     minutos: list[Minuto] = []
     bloque_actual: int | None = None
     inicio_bloque = 0.0
     cuadros: list[Cuadro] = []
+    desvios: list[float] = []
 
     def cerrar() -> None:
         if not cuadros:
             return
         minuto = resumir_minuto(inicio_bloque, cuadros, cuadros_por_segundo, ancho_escena_m)
+        minuto.control_cuadros = len(desvios)
+        minuto.control_tronco_suma = sum(desvios)
+        minuto.control_tronco_max = max(desvios, default=0.0)
         minutos.append(minuto)
         if al_cerrar_minuto is not None:
             al_cerrar_minuto(minuto)
         cuadros.clear()
+        desvios.clear()
 
-    for ts, imagen in muestras:
+    for indice, (ts, imagen) in enumerate(muestras):
         alto, ancho = imagen.shape[:2]
         medida = medir_cuadro(modelo.estimar(imagen, int(ts * 1000)), alto, ancho, lado)
         lado = medida.lado
@@ -210,8 +229,49 @@ def medir_jornada(muestras, modelo, cuadros_por_segundo: float = CUADROS_POR_SEG
             cerrar()
             bloque_actual, inicio_bloque = bloque, ts
         cuadros.append(Cuadro(ts, medida.angulos, medida.centro, medida.cuerpo_entero))
+
+        if modelo_control is not None and control_cada > 0 and indice % control_cada == 0:
+            control = medir_cuadro(modelo_control.estimar(imagen, int(ts * 1000)), alto, ancho, lado)
+            # Sólo cuentan los cuadros donde los DOS midieron el tronco: si uno
+            # no vio a la persona, la diferencia no significa nada.
+            if (medida.angulos is not None and control.angulos is not None
+                    and medida.angulos.tronco is not None and control.angulos.tronco is not None):
+                desvios.append(abs(medida.angulos.tronco - control.angulos.tronco))
     cerrar()
     return minutos
+
+
+def resumen_control(minutos: list[Minuto]) -> str | None:
+    """Línea de control de calidad del modo mixto, o None si no se usó.
+
+    El número que importa es el desvío máximo: un promedio bajo puede esconder
+    un tramo en el que el modelo principal se fue de banda.
+    """
+    controlados = sum(m.control_cuadros for m in minutos)
+    if not controlados:
+        return None
+    promedio = sum(m.control_tronco_suma for m in minutos) / controlados
+    maximo = max(m.control_tronco_max for m in minutos)
+    aviso = ("" if maximo <= DESVIO_TOLERABLE_GRADOS else
+             f" **ATENCIÓN:** supera los {DESVIO_TOLERABLE_GRADOS:.0f}° y puede cambiar de banda; "
+             "conviene medir ese puesto con el modelo de referencia.")
+    return (f"- **Control cruzado:** {controlados} cuadros reprocesados con el modelo de "
+            f"referencia; el tronco se corrió {promedio:.1f}° en promedio y {maximo:.1f}° "
+            f"como máximo.{aviso}")
+
+
+def _con_linea_de_control(texto: str, linea: str) -> str:
+    """Mete la línea del control cruzado junto a las demás del encabezado.
+
+    Va acá y no en `resumen_markdown` porque el control cruzado es una
+    propiedad de cómo se midió, no de la planilla.
+    """
+    lineas = texto.splitlines()
+    ultima_vineta = max((i for i, l in enumerate(lineas) if l.startswith("- ")), default=-1)
+    if ultima_vineta < 0:
+        return texto + chr(10) + linea
+    lineas.insert(ultima_vineta + 1, linea)
+    return chr(10).join(lineas)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -229,6 +289,13 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--ruta-modelo", default=None, help="pesos YOLO (.pt) o archivo .task de MediaPipe")
     p.add_argument("--lado", choices=("auto", "izq", "der"), default="auto",
                    help="lado del cuerpo que mira a la cámara")
+    # Modo mixto: el modelo principal mide todos los cuadros (la IMX500 lo hace
+    # sin tocar la CPU) y éste reprocesa una fracción como control cruzado.
+    p.add_argument("--modelo-control", choices=("yolo", "mediapipe"), default=None,
+                   help="segundo modelo para controlar uno de cada N cuadros")
+    p.add_argument("--ruta-control", default=None, help="pesos o .task del modelo de control")
+    p.add_argument("--control-cada", type=int, default=CONTROL_CADA,
+                   help="cada cuántos cuadros correr el modelo de control")
     p.add_argument("--carga-kg", type=float, default=0.0,
                    help="peso que manipula de forma habitual (lo informa el evaluador)")
     p.add_argument("--hay-silla", action="store_true",
@@ -250,18 +317,24 @@ def main(argv: list[str] | None = None) -> None:
 
     if not args.informe:
         modelo = crear_modelo(args.modelo, args.ruta_modelo)
+        control = crear_modelo(args.modelo_control, args.ruta_control) if args.modelo_control else None
         lado = None if args.lado == "auto" else args.lado
         print(f"Midiendo {args.puesto} en {ruta}. Ctrl-C para cortar.")
+        if control is not None:
+            print(f"Control cruzado con {args.modelo_control}, uno de cada {args.control_cada} cuadros.")
         try:
             medir_jornada(
                 cuadros_de(args.fuente, args.cuadros_por_segundo, args.horas), modelo,
                 args.cuadros_por_segundo, args.ancho_escena, lado,
                 al_cerrar_minuto=lambda m: guardar_minuto(ruta, m),
+                modelo_control=control, control_cada=args.control_cada,
             )
         except KeyboardInterrupt:
             print("Medición cortada.")
         finally:
             modelo.cerrar()
+            if control is not None:
+                control.cerrar()
 
     minutos = cargar_minutos(ruta)
     if not minutos:
@@ -271,11 +344,25 @@ def main(argv: list[str] | None = None) -> None:
 
     planilla = planilla_2d(minutos, args.hay_silla, args.carga_kg, args.corte_minimo,
                            declarado(args.carga_termica), declarado(args.manifestacion_temprana))
-    datos = {"Puesto": args.puesto, "Fecha": fecha, **planilla}
+    controlados = sum(m.control_cuadros for m in minutos)
+    datos = {
+        "Puesto": args.puesto,
+        "Fecha": fecha,
+        **planilla,
+        "control_cruzado": {
+            "cuadros": controlados,
+            "tronco_promedio": (round(sum(m.control_tronco_suma for m in minutos) / controlados, 2)
+                                if controlados else None),
+            "tronco_max": round(max((m.control_tronco_max for m in minutos), default=0.0), 2),
+        },
+    }
     ruta.with_suffix(".json").write_text(
         json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     texto = resumen_markdown(planilla)
+    control = resumen_control(minutos)
+    if control:
+        texto = _con_linea_de_control(texto, control)
     documento = f"# Bipedestación — {args.puesto} — {fecha}\n\n{texto}\n"
     ruta.with_suffix(".md").write_text(documento, encoding="utf-8")
     # El PDF sale del mismo Markdown que el .md, igual que en analizar.py: el
