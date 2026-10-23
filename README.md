@@ -67,9 +67,11 @@ cada cuadro sólo se guarda si la persona estaba de pie y cuánto se movió. Una
 jornada de 8 h a 2 cuadros por segundo son 57.600 cuadros pero 480 líneas, y
 con eso alcanza para la planilla. No se guarda ni video ni cuadros.
 
-`--informe` escribe al lado el `.md` y el `.json` con la corrida de
-bipedestación más larga, la deambulación de la hora más quieta y las respuestas
-de los pasos 1, 2.1 y 2.2.
+`--informe` escribe al lado el `.md`, el `.json` y el `.pdf` (necesita `fpdf2`,
+igual que el informe de `analizar`) con la corrida de bipedestación más larga,
+la deambulación de la hora más quieta y las respuestas de los cuatro ítems del
+Paso 2. El PDF es para imprimirlo y **adjuntarlo** a la planilla: no reproduce
+el formulario oficial ni lleva espacio para las firmas.
 
 Los enunciados del borrador son los del formulario del Anexo I, y termina con
 la conclusión que pide la planilla: riesgo tolerable, se presume tolerable, o

@@ -4,6 +4,7 @@ import json
 
 import cv2
 import numpy as np
+import pytest
 from esqueletos import perfil
 from test_bipedestacion import sentado
 
@@ -11,6 +12,12 @@ from ergonomia import jornada
 from ergonomia.bipedestacion import Minuto
 
 IMAGEN = np.zeros((1000, 1000, 3), np.uint8)
+
+
+def extraer_texto(ruta) -> str:
+    """Capa de texto del PDF. Con pypdf si está; si no, se saltea la prueba."""
+    pypdf = pytest.importorskip("pypdf")
+    return "\n".join(p.extract_text() for p in pypdf.PdfReader(str(ruta)).pages)
 
 
 class _PoseFalsa:
@@ -186,3 +193,21 @@ def test_los_items_declarados_llegan_al_borrador(tmp_path):
     assert datos["declarado"]["carga_termica"] is False
     assert datos["paso2_manifestacion_temprana"] is True
     assert datos["conclusion"] == "requiere evaluacion de riesgos"
+
+
+def test_el_borrador_sale_tambien_en_pdf(tmp_path):
+    # El borrador se adjunta a la planilla firmada, así que tiene que imprimirse.
+    ruta = jornada.ruta_del_dia(tmp_path, "Prensa 2", "2026-10-22")
+    for i in range(200):
+        jornada.guardar_minuto(ruta, Minuto(inicio=i * 60, cuadros=120, medidos=120,
+                                            segundos_de_pie=60.0, metros=0.5, con_escala=True))
+
+    jornada.main(["--informe", "--puesto", "Prensa 2", "--salida", str(tmp_path),
+                  "--fecha", "2026-10-22", "--carga-kg", "8"])
+
+    pdf = ruta.with_suffix(".pdf")
+    assert pdf.read_bytes().startswith(b"%PDF")
+    texto = extraer_texto(pdf)
+    assert "Prensa 2" in texto
+    assert "sin posibilidad de sentarse" in texto
+    assert "Evaluacion de Riesgos" in texto.replace("ó", "o")
