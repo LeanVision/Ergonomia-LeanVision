@@ -25,6 +25,12 @@ SEPARACION_HOMBROS_PERFIL = 0.35
 # Si el centro de la persona salta más que esto (fracción del ancho o alto de
 # la imagen) entre dos cuadros seguidos, cambió la persona seguida o la toma.
 SALTO_PERSONA = 0.15
+# Un tronco no gira más rápido que esto. Medido en un video real: aparecían
+# saltos de 80° a 100° entre cuadros separados 0,1 s, con el signo invertido,
+# que son errores de detección y no movimiento. No se descartan los cuadros
+# —no se sabe cuál de los dos está mal— pero el informe los cuenta: si son
+# muchos, los ángulos de esa toma no se sostienen.
+GRADOS_POR_SEGUNDO_IMPOSIBLES = 300.0
 # Por debajo de este % de cuadros de costado, el informe avisa que no es confiable.
 PERFIL_MINIMO = 70.0
 
@@ -54,6 +60,26 @@ def contar_saltos(cuadros: list[Cuadro]) -> int:
         if anterior is not None and max(abs(c.centro[0] - anterior[0]), abs(c.centro[1] - anterior[1])) > SALTO_PERSONA:
             saltos += 1
         anterior = c.centro
+    return saltos
+
+
+def contar_saltos_de_angulo(cuadros: list[Cuadro]) -> int:
+    """Veces que el tronco cambia más rápido de lo que un cuerpo puede moverse.
+
+    Sólo entre cuadros medidos y consecutivos en el tiempo: con un hueco en el
+    medio, un cambio grande puede ser movimiento real.
+    """
+    saltos = 0
+    anterior = None
+    for cuadro in cuadros:
+        if cuadro.angulos is None or cuadro.angulos.tronco is None:
+            anterior = None
+            continue
+        if anterior is not None:
+            dt = cuadro.tiempo_s - anterior[0]
+            if 0 < dt <= 0.5 and abs(cuadro.angulos.tronco - anterior[1]) / dt > GRADOS_POR_SEGUNDO_IMPOSIBLES:
+                saltos += 1
+        anterior = (cuadro.tiempo_s, cuadro.angulos.tronco)
     return saltos
 
 
@@ -122,6 +148,7 @@ def armar_informe(cuadros: list[Cuadro], fps: float, condiciones: Condiciones,
             "cuadros_sin_persona": sum(1 for c in cuadros_totales if c.angulos is None and c.cuerpo_entero),
             "cuadros_cuerpo_cortado": sum(1 for c in cuadros_totales if not c.cuerpo_entero),
             "cambios_de_persona_o_toma": contar_saltos(cuadros_totales),
+            "saltos_de_angulo_imposibles": contar_saltos_de_angulo(cuadros),
         },
         "condiciones": asdict(condiciones),
         "reba": {
@@ -200,6 +227,9 @@ def informe_markdown(inf: dict) -> str:
         avisos.append(f"la persona está de costado sólo en el {perfil:.0f} % de los cuadros con persona")
     if calidad["cambios_de_persona_o_toma"]:
         avisos.append(f"la persona seguida o la toma cambió {calidad['cambios_de_persona_o_toma']} veces")
+    if calidad["saltos_de_angulo_imposibles"]:
+        avisos.append(f"el tronco dio {calidad['saltos_de_angulo_imposibles']} saltos imposibles "
+                      "entre cuadros seguidos")
     if avisos:
         lineas += [
             "**ATENCIÓN: resultados poco confiables.** " + "; ".join(avisos).capitalize() + ". "
@@ -212,6 +242,9 @@ def informe_markdown(inf: dict) -> str:
         f"- **Cuadros sin persona detectada:** {calidad['cuadros_sin_persona']}",
         f"- **Cuadros descartados por cuerpo cortado, persona muy lejos o postura imposible:** {calidad['cuadros_cuerpo_cortado']}",
         f"- **Cambios bruscos de persona o de toma:** {calidad['cambios_de_persona_o_toma']}",
+        f"- **Saltos de tronco imposibles entre cuadros seguidos:** "
+        f"{calidad['saltos_de_angulo_imposibles']} (un cuerpo no gira a más de "
+        f"{GRADOS_POR_SEGUNDO_IMPOSIBLES:.0f}°/s: son errores de detección)",
         "",
         "## REBA",
         "",

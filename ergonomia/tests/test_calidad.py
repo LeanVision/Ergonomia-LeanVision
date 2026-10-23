@@ -76,3 +76,47 @@ def test_descarta_esqueletos_dados_vuelta():
 
     assert postura_posible(Angulos(tronco=93))
     assert not postura_posible(Angulos(tronco=-177))
+
+
+def test_cuenta_los_saltos_de_tronco_imposibles():
+    # Caso real medido en un video de alguien paleando: el tronco pasaba de 53°
+    # a -27° en 0,1 s. Un cuerpo no hace eso; es el detector invirtiendo el
+    # signo. Acá se reproduce con dos flexiones lejanas, porque el esqueleto
+    # sintético de las pruebas no sabe generar extensión.
+    from ergonomia.informe import contar_saltos_de_angulo
+
+    def cuadro(t, tronco):
+        return Cuadro(t, calcular_angulos(perfil(tronco=tronco), "der"))
+
+    seguidos = [cuadro(0.0, 10.0), cuadro(0.1, 85.0), cuadro(0.2, 10.0)]
+    assert contar_saltos_de_angulo(seguidos) == 2
+
+    # El mismo cambio con un hueco en el medio puede ser movimiento real.
+    espaciados = [cuadro(0.0, 10.0), cuadro(1.0, 85.0)]
+    assert contar_saltos_de_angulo(espaciados) == 0
+
+    # Un movimiento rápido pero posible no se cuenta.
+    normal = [cuadro(0.0, 10.0), cuadro(0.1, 35.0), cuadro(0.2, 60.0)]
+    assert contar_saltos_de_angulo(normal) == 0
+
+
+def test_los_cuadros_sin_medir_cortan_la_comparacion():
+    from ergonomia.informe import contar_saltos_de_angulo
+
+    def cuadro(t, tronco):
+        return Cuadro(t, calcular_angulos(perfil(tronco=tronco), "der"))
+
+    # Entre los dos extremos hay un cuadro sin persona: no se comparan.
+    assert contar_saltos_de_angulo([cuadro(0.0, 10.0), Cuadro(0.1, None), cuadro(0.2, 85.0)]) == 0
+
+
+def test_el_informe_avisa_de_los_saltos_imposibles():
+    from ergonomia.informe import informe_markdown
+
+    def cuadro(t, tronco):
+        return Cuadro(t, calcular_angulos(perfil(tronco=tronco), "der"))
+
+    cuadros = [cuadro(i / 10, 85.0 if i % 2 else 10.0) for i in range(60)]
+    inf = armar_informe(cuadros, 10, Condiciones())
+    assert inf["calidad"]["saltos_de_angulo_imposibles"] > 50
+    assert "saltos imposibles" in informe_markdown(inf)
