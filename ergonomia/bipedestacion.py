@@ -25,9 +25,12 @@ from .informe import Cuadro
 # Umbrales de la planilla, en segundos. No son ajustables: los fija la norma.
 DOS_HORAS = 2 * 3600
 TRES_HORAS = 3 * 3600
-# "Deambulación restringida": menos de 100 m por hora.
+# "Escasa deambulación": el Paso 2 de la planilla dice "caminando no más de
+# 100 metros/hora", así que los 100 justos entran. (El Dec. 49/14 define la
+# deambulación restringida como "menos de CIEN (100) metros por hora"; manda la
+# redacción de la planilla, que es el formulario que se completa y se firma.)
 METROS_POR_HORA_ESCASOS = 100.0
-# Portación de cargas: más de 2 kg.
+# Portación de cargas: la planilla dice "cargas > 2 Kg", estrictamente mayor.
 CARGA_MINIMA_KG = 2.0
 
 # Una pausa más corta que esto no corta una corrida de bipedestación. La norma
@@ -54,6 +57,10 @@ class Minuto:
     segundos_de_pie: float = 0.0
     segundos_sentado: float = 0.0
     metros: float = 0.0
+    # False = no había escala declarada, así que `metros` es 0 por falta de
+    # dato y no porque la persona estuviera quieta. Sin esto, un puesto sin
+    # calibrar contesta "0 m/h" y dispara solo el ítem 1 del Paso 2.
+    con_escala: bool = False
 
     @property
     def cobertura(self) -> float:
@@ -90,7 +97,7 @@ def resumir_minuto(inicio: float, cuadros: list[Cuadro], fps: float,
     Sin ese dato no hay metros y la deambulación queda sin medir, que es lo
     correcto: mejor sin dato que con un número inventado.
     """
-    minuto = Minuto(inicio=inicio)
+    minuto = Minuto(inicio=inicio, con_escala=ancho_escena_m > 0)
     dt = 1.0 / fps if fps > 0 else 0.0
     anterior = None
     for cuadro in cuadros:
@@ -161,26 +168,47 @@ def deambulacion_minima_por_hora(minutos: list[Minuto]) -> float | None:
     Se busca el mínimo y no el promedio porque el Paso 2.1 se dispara con UNA
     hora de poca deambulación, y promediar la jornada la taparía. Las ventanas
     con algún minuto sin medir se descartan: con un hueco adentro, el total de
-    metros sale bajo por falta de datos y no porque la persona esté quieta.
+    metros sale bajo por falta de datos y no porque la persona esté quieta. Por
+    lo mismo se descartan los minutos medidos sin escala declarada.
     """
     ventanas = [
         sum(m.metros for m in minutos[i:i + 60])
         for i in range(len(minutos) - 59)
-        if all(m.medidos for m in minutos[i:i + 60])
+        if all(m.medidos and m.con_escala for m in minutos[i:i + 60])
     ]
     return min(ventanas) if ventanas else None
 
 
 def planilla_2d(minutos: list[Minuto], hay_silla: bool = False, carga_kg: float = 0.0,
-                corte_minimo_s: float = CORTE_MINIMO_S) -> dict:
+                corte_minimo_s: float = CORTE_MINIMO_S,
+                carga_termica: bool | None = None,
+                manifestacion_temprana: bool | None = None) -> dict:
     """Borrador de la 2.D, con el número que justifica cada respuesta.
 
-    `hay_silla` y `carga_kg` los informa quien evalúa: la cámara ve que el
-    trabajador no se sienta, no si no PUEDE sentarse, y no pesa lo que levanta.
-    Son justo los dos datos que la planilla pide y que ninguna medición óptica
-    puede dar.
+    Sigue el formulario del Anexo I al pie de la letra:
 
-    No dictamina el nivel de riesgo. La Evaluación de Riesgos la hace y la
+        Paso 1: el puesto se desarrolla de pie, sin posibilidad de sentarse,
+        durante 2 horas seguidas o más. Si es NO, el riesgo es tolerable; si es
+        SÍ, se continúa con el Paso 2.
+
+        Paso 2: (1) de pie 3 h seguidas o más, sin posibilidad de sentarse, con
+        escasa deambulación (caminando no más de 100 metros/hora); (2) de pie
+        2 h seguidas o más, sin posibilidad de sentarse ni desplazarse o con
+        escasa deambulación, levantando y/o transportando cargas > 2 kg;
+        (3) bipedestación prolongada con la temperatura y la humedad fuera de
+        los límites admisibles; (4) manifestación temprana de las enfermedades
+        del Artículo 1°. Si todas son NO se presume tolerable; si alguna es SÍ,
+        hay que hacer una Evaluación de Riesgos.
+
+    Lo que la cámara no puede ver lo informa quien evalúa: `hay_silla` (ve que
+    el trabajador no se sienta, no si no PUEDE sentarse), `carga_kg` y
+    `carga_termica` (termohigrómetro) y `manifestacion_temprana`, que sale del
+    Servicio de Medicina del Trabajo.
+
+    Un ítem que no se pudo medir ni declarar vale None, nunca False: responder
+    "no" a lo que nadie midió es lo que haría tolerable un puesto que no lo es.
+
+    No dictamina el nivel de riesgo: la Evaluación de Riesgos la hace y la
     rubrica el profesional con conocimiento en ergonomía.
     """
     corridas = corridas_de_pie(minutos, corte_minimo_s)
@@ -188,7 +216,34 @@ def planilla_2d(minutos: list[Minuto], hay_silla: bool = False, carga_kg: float 
     deambulacion = deambulacion_minima_por_hora(minutos)
     medidos = sum(m.medidos for m in minutos)
     cuadros = sum(m.cuadros for m in minutos)
-    con_carga = carga_kg > CARGA_MINIMA_KG
+    # "Sin posibilidad de sentarse" está en el Paso 1 y en los dos primeros
+    # ítems del Paso 2: es condición de los tres, no sólo del primero.
+    sin_sentarse = not hay_silla
+    escasa = None if deambulacion is None else deambulacion <= METROS_POR_HORA_ESCASOS
+
+    paso1 = mayor >= DOS_HORAS and sin_sentarse
+    # Los ítems 1 y 2 del Paso 2 dependen de la deambulación: sin ese dato no se
+    # contestan, aunque el resto de la condición se cumpla.
+    paso2_1 = None if escasa is None else (mayor >= TRES_HORAS and sin_sentarse and escasa)
+    paso2_2 = (
+        None if escasa is None
+        else (mayor >= DOS_HORAS and sin_sentarse and escasa and carga_kg > CARGA_MINIMA_KG)
+    )
+    # El ítem 3 necesita termohigrómetro y el 4 lo informa Medicina del Trabajo:
+    # ninguno sale de la cámara, pero los dos los puede declarar quien evalúa.
+    # Si quedaran fijos en None, la conclusión jamás podría presumir tolerable.
+    paso2 = [paso2_1, paso2_2, carga_termica, manifestacion_temprana]
+
+    if not paso1:
+        conclusion = "tolerable"  # Paso 1 en NO: no se sigue al Paso 2.
+    elif any(item is True for item in paso2):
+        conclusion = "requiere evaluacion de riesgos"
+    elif any(item is None for item in paso2):
+        # No se puede presumir tolerable con ítems sin contestar.
+        conclusion = "sin determinar"
+    else:
+        conclusion = "se presume tolerable"
+
     return {
         "minutos_registrados": len(minutos),
         "cobertura": round(medidos / cuadros, 3) if cuadros else 0.0,
@@ -196,32 +251,48 @@ def planilla_2d(minutos: list[Minuto], hay_silla: bool = False, carga_kg: float 
         "corrida_de_pie_mas_larga_s": round(mayor),
         "corridas_de_pie_s": [round(c) for c in corridas],
         "deambulacion_minima_m_h": None if deambulacion is None else round(deambulacion, 1),
-        "declarado": {"hay_silla": hay_silla, "carga_kg": carga_kg},
-        # Paso 1: de pie 2 h seguidas o más, sin posibilidad de sentarse.
-        "paso1_de_pie_2h_sin_sentarse": mayor >= DOS_HORAS and not hay_silla,
-        # Paso 2.1: 3 h o más de pie con deambulación escasa.
-        "paso2_3h_deambulacion_escasa": (
-            mayor >= TRES_HORAS
-            and deambulacion is not None
-            and deambulacion <= METROS_POR_HORA_ESCASOS
-        ),
-        # Paso 2.2: 2 h o más de pie con portación de cargas de más de 2 kg.
-        "paso2_2h_con_carga": mayor >= DOS_HORAS and con_carga,
-        # La carga térmica (Paso 2.3) necesita termohigrómetro: no se mide acá.
-        "paso2_2h_con_carga_termica": None,
+        "declarado": {
+            "hay_silla": hay_silla,
+            "carga_kg": carga_kg,
+            "carga_termica": carga_termica,
+            "manifestacion_temprana": manifestacion_temprana,
+        },
+        "paso1_de_pie_2h_sin_sentarse": paso1,
+        "paso2_3h_deambulacion_escasa": paso2_1,
+        "paso2_2h_con_carga": paso2_2,
+        "paso2_2h_con_carga_termica": carga_termica,
+        "paso2_manifestacion_temprana": manifestacion_temprana,
+        "conclusion": conclusion,
     }
 
 
 def resumen_markdown(p: dict) -> str:
-    """Las líneas de la 2.D para el informe del evaluador."""
-    def si_no(valor) -> str:
-        return "no medido" if valor is None else ("SÍ" if valor else "no")
+    """Las líneas de la 2.D para el informe del evaluador.
 
+    Los enunciados son los del formulario del Anexo I, para que quien complete
+    la planilla pueda copiar la respuesta sin traducir nada.
+    """
+    def si_no(valor) -> str:
+        return "sin responder" if valor is None else ("SÍ" if valor else "no")
+
+    declarado = p["declarado"]
     deambulacion = (
         "no medida (hace falta una hora seguida de mediciones y el ancho de la escena declarado)"
         if p["deambulacion_minima_m_h"] is None
         else f"{p['deambulacion_minima_m_h']:.1f} m/h en la hora más quieta")
     horas, minutos_sueltos = divmod(round(p["corrida_de_pie_mas_larga_s"] / 60), 60)
+    conclusiones = {
+        "tolerable": "Paso 1 en NO: el riesgo se considera tolerable.",
+        "se presume tolerable": "Todas las respuestas del Paso 2 en NO: se presume tolerable.",
+        "requiere evaluacion de riesgos": (
+            "Alguna respuesta del Paso 2 en SÍ: el empleador no puede presumir que el riesgo "
+            "sea tolerable y debe realizarse una Evaluación de Riesgos."
+        ),
+        "sin determinar": (
+            "Quedan ítems del Paso 2 sin responder: no se puede presumir tolerable hasta "
+            "completarlos."
+        ),
+    }
     lineas = [
         "## Borrador para la planilla 2.D – Bipedestación",
         "",
@@ -231,13 +302,24 @@ def resumen_markdown(p: dict) -> str:
         f"- **Bipedestación continua más larga:** {horas} h {minutos_sueltos:02d} min",
         f"- **Deambulación:** {deambulacion}",
         f"- **Declarado por el evaluador:** silla en el puesto: "
-        f"{si_no(p['declarado']['hay_silla'])}; carga manipulada: {p['declarado']['carga_kg']:.1f} kg",
+        f"{si_no(declarado['hay_silla'])}; carga manipulada: {declarado['carga_kg']:.1f} kg; "
+        f"manifestación temprana: {si_no(declarado['manifestacion_temprana'])}",
         "",
-        f"- Paso 1 — de pie 2 h seguidas sin poder sentarse: **{si_no(p['paso1_de_pie_2h_sin_sentarse'])}**",
-        f"- Paso 2.1 — 3 h con deambulación de menos de 100 m/h: **{si_no(p['paso2_3h_deambulacion_escasa'])}**",
-        f"- Paso 2.2 — 2 h con portación de cargas de más de 2 kg: **{si_no(p['paso2_2h_con_carga'])}**",
-        "- Paso 2.3 — 2 h con exposición a carga térmica: **no medido** "
-        "(necesita termohigrómetro)",
+        "**Paso 1** — el puesto se desarrolla en posición de pie, sin posibilidad de sentarse, "
+        f"durante 2 horas seguidas o más: **{si_no(p['paso1_de_pie_2h_sin_sentarse'])}**",
+        "",
+        "**Paso 2**",
+        "",
+        "1. De pie 3 horas seguidas o más, sin posibilidad de sentarse, con escasa deambulación "
+        f"(caminando no más de 100 metros/hora): **{si_no(p['paso2_3h_deambulacion_escasa'])}**",
+        "2. De pie 2 horas seguidas o más, sin posibilidad de sentarse ni desplazarse o con escasa "
+        f"deambulación, levantando y/o transportando cargas > 2 kg: **{si_no(p['paso2_2h_con_carga'])}**",
+        "3. Bipedestación prolongada con temperatura y humedad fuera de los límites admisibles: "
+        f"**{si_no(p['paso2_2h_con_carga_termica'])}** (necesita termohigrómetro)",
+        "4. Manifestación temprana de las enfermedades del Artículo 1°: "
+        f"**{si_no(p['paso2_manifestacion_temprana'])}** (lo informa el Servicio de Medicina del Trabajo)",
+        "",
+        conclusiones[p["conclusion"]],
     ]
     if p["cobertura"] < 0.7:
         lineas += ["", "**ATENCIÓN:** la pose midió menos del 70 % de los cuadros. El tiempo de "

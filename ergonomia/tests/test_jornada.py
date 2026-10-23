@@ -107,7 +107,7 @@ def test_el_informe_del_dia(tmp_path, capsys):
     ruta = jornada.ruta_del_dia(tmp_path, "Prensa 2", "2026-10-22")
     for i in range(200):  # 3 h 20 de pie, quieto
         jornada.guardar_minuto(ruta, Minuto(inicio=i * 60, cuadros=120, medidos=120,
-                                            segundos_de_pie=60.0, metros=0.5))
+                                            segundos_de_pie=60.0, metros=0.5, con_escala=True))
 
     jornada.main(["--informe", "--puesto", "Prensa 2", "--salida", str(tmp_path),
                   "--fecha", "2026-10-22", "--carga-kg", "8"])
@@ -117,7 +117,8 @@ def test_el_informe_del_dia(tmp_path, capsys):
     assert datos["paso1_de_pie_2h_sin_sentarse"] is True
     assert datos["paso2_3h_deambulacion_escasa"] is True
     assert datos["paso2_2h_con_carga"] is True
-    assert datos["declarado"] == {"hay_silla": False, "carga_kg": 8.0}
+    assert datos["declarado"] == {"hay_silla": False, "carga_kg": 8.0,
+                                  "carga_termica": None, "manifestacion_temprana": None}
 
     texto = ruta.with_suffix(".md").read_text(encoding="utf-8")
     assert "planilla 2.D" in texto
@@ -163,3 +164,25 @@ def test_de_un_video_al_borrador(tmp_path, monkeypatch):
     assert datos["minutos_de_pie"] == 2.0
     # Dos minutos no alcanzan para ninguno de los pasos de la planilla.
     assert datos["paso1_de_pie_2h_sin_sentarse"] is False
+
+
+def test_los_items_declarados_llegan_al_borrador(tmp_path):
+    ruta = jornada.ruta_del_dia(tmp_path, "Prensa 2", "2026-10-22")
+    for i in range(200):
+        jornada.guardar_minuto(ruta, Minuto(inicio=i * 60, cuadros=120, medidos=120,
+                                            segundos_de_pie=60.0, metros=10.0, con_escala=True))
+
+    # Sin declarar, los dos ítems que no salen de la cámara quedan sin
+    # responder y el borrador no puede presumir tolerable.
+    jornada.main(["--informe", "--puesto", "Prensa 2", "--salida", str(tmp_path),
+                  "--fecha", "2026-10-22"])
+    datos = json.loads(ruta.with_suffix(".json").read_text(encoding="utf-8"))
+    assert datos["conclusion"] == "sin determinar"
+
+    jornada.main(["--informe", "--puesto", "Prensa 2", "--salida", str(tmp_path),
+                  "--fecha", "2026-10-22", "--carga-termica", "no",
+                  "--manifestacion-temprana", "si"])
+    datos = json.loads(ruta.with_suffix(".json").read_text(encoding="utf-8"))
+    assert datos["declarado"]["carga_termica"] is False
+    assert datos["paso2_manifestacion_temprana"] is True
+    assert datos["conclusion"] == "requiere evaluacion de riesgos"

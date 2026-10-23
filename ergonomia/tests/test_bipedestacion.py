@@ -44,16 +44,18 @@ def cuadros_de(esqueleto, cantidad, inicio=0.0, fps=2.0):
 
 
 def de_pie(inicio, metros=0.0, segundos=60.0):
-    return Minuto(inicio=inicio, cuadros=120, medidos=120, segundos_de_pie=segundos, metros=metros)
+    # con_escala=True: minuto de un puesto con el ancho de la escena declarado.
+    return Minuto(inicio=inicio, cuadros=120, medidos=120, segundos_de_pie=segundos,
+                  metros=metros, con_escala=True)
 
 
 def en_asiento(inicio, segundos_sentado=60.0):
-    return Minuto(inicio=inicio, cuadros=120, medidos=120,
+    return Minuto(inicio=inicio, cuadros=120, medidos=120, con_escala=True,
                   segundos_de_pie=60.0 - segundos_sentado, segundos_sentado=segundos_sentado)
 
 
 def sin_medir(inicio):
-    return Minuto(inicio=inicio, cuadros=120, medidos=0)
+    return Minuto(inicio=inicio, cuadros=120, medidos=0, con_escala=True)
 
 
 def test_el_muslo_vertical_es_estar_de_pie():
@@ -178,7 +180,75 @@ def test_paso2_con_carga_la_declara_el_evaluador():
 def test_la_carga_termica_no_se_mide():
     planilla = planilla_2d([de_pie(0)])
     assert planilla["paso2_2h_con_carga_termica"] is None
-    assert "no medido" in resumen_markdown(planilla)
+    assert "necesita termohigrómetro" in resumen_markdown(planilla)
+
+
+def test_los_items_del_paso_2_piden_no_poder_sentarse():
+    # El formulario repite "sin posibilidad de sentarse" en el Paso 1 y en los
+    # dos primeros items del Paso 2: es condicion de los tres.
+    jornada = [de_pie(i * 60, metros=0.5) for i in range(200)]
+    sin_silla = planilla_2d(jornada, hay_silla=False, carga_kg=8.0)
+    assert sin_silla["paso2_3h_deambulacion_escasa"] is True
+    assert sin_silla["paso2_2h_con_carga"] is True
+
+    con_silla = planilla_2d(jornada, hay_silla=True, carga_kg=8.0)
+    assert con_silla["paso2_3h_deambulacion_escasa"] is False
+    assert con_silla["paso2_2h_con_carga"] is False
+
+
+def test_el_item_de_cargas_tambien_pide_poca_deambulacion():
+    # "sin posibilidades de sentarse ni desplazarse o con escasa deambulacion":
+    # quien camina 180 m/h no cumple ese item aunque levante 8 kg.
+    caminando = [de_pie(i * 60, metros=3.0) for i in range(200)]
+    assert planilla_2d(caminando, carga_kg=8.0)["paso2_2h_con_carga"] is False
+
+
+def test_lo_que_no_se_midio_no_se_contesta_que_no():
+    # Sin deambulacion medida, los items 1 y 2 quedan sin responder: un "no"
+    # ahi haria presumir tolerable un puesto que nadie evaluo.
+    sin_metros = [Minuto(inicio=i * 60, cuadros=120, medidos=120, segundos_de_pie=60.0)
+                  for i in range(200)]  # con_escala=False: puesto sin calibrar
+    planilla = planilla_2d(sin_metros, carga_kg=8.0)
+    assert planilla["paso2_3h_deambulacion_escasa"] is None
+    assert planilla["paso2_2h_con_carga"] is None
+    assert planilla["conclusion"] == "sin determinar"
+
+
+def test_la_conclusion_sigue_el_formulario():
+    corta = [de_pie(i * 60, metros=0.5) for i in range(30)]
+    # Paso 1 en NO: no se sigue al Paso 2.
+    assert planilla_2d(corta)["conclusion"] == "tolerable"
+
+    # Paso 1 en SI y todo el Paso 2 en NO (con la manifestacion declarada en no).
+    dos_horas = [de_pie(i * 60, metros=10.0) for i in range(125)]
+    presumible = planilla_2d(dos_horas, carga_termica=False, manifestacion_temprana=False)
+    assert presumible["paso1_de_pie_2h_sin_sentarse"] is True
+    assert presumible["conclusion"] == "se presume tolerable"
+
+    # Un SI en cualquier item del Paso 2 obliga a la Evaluacion de Riesgos.
+    quieto = [de_pie(i * 60, metros=0.5) for i in range(200)]
+    con_riesgo = planilla_2d(quieto, carga_termica=False, manifestacion_temprana=False)
+    assert con_riesgo["conclusion"] == "requiere evaluacion de riesgos"
+
+
+def test_la_manifestacion_temprana_la_declara_medicina_del_trabajo():
+    # Item 4 del Paso 2: no se mide con camara y alcanza para que el riesgo
+    # deje de presumirse tolerable.
+    dos_horas = [de_pie(i * 60, metros=10.0) for i in range(125)]
+    sin_sintoma = planilla_2d(dos_horas, carga_termica=False, manifestacion_temprana=False)
+    assert sin_sintoma["conclusion"] == "se presume tolerable"
+    con_sintoma = planilla_2d(dos_horas, carga_termica=False, manifestacion_temprana=True)
+    assert con_sintoma["paso2_manifestacion_temprana"] is True
+    assert con_sintoma["conclusion"] == "requiere evaluacion de riesgos"
+
+
+def test_los_100_metros_por_hora_entran():
+    # La planilla dice "caminando no mas de 100 metros/hora": los 100 justos
+    # cuentan como escasa deambulacion.
+    justo = [de_pie(i * 60, metros=100.0 / 60.0) for i in range(200)]
+    planilla = planilla_2d(justo)
+    assert planilla["deambulacion_minima_m_h"] == 100.0
+    assert planilla["paso2_3h_deambulacion_escasa"] is True
 
 
 def test_el_resumen_avisa_cuando_la_cobertura_es_baja():
@@ -192,4 +262,14 @@ def test_el_resumen_avisa_cuando_la_cobertura_es_baja():
 def test_sin_ancho_de_escena_no_se_inventan_metros():
     minuto = resumir_minuto(0.0, cuadros_de(perfil(), 120), fps=2.0, ancho_escena_m=0.0)
     assert minuto.metros == 0.0
+    assert minuto.con_escala is False
     assert planilla_2d([minuto])["deambulacion_minima_m_h"] is None
+
+    # Y tampoco con un turno entero: sin escala los metros son 0 por falta de
+    # dato, y darlos por buenos haria contestar "0 m/h" y disparar el Paso 2.1
+    # en cualquier puesto sin calibrar.
+    turno = [resumir_minuto(i * 60.0, cuadros_de(perfil(), 120), fps=2.0, ancho_escena_m=0.0)
+             for i in range(200)]
+    planilla = planilla_2d(turno)
+    assert planilla["deambulacion_minima_m_h"] is None
+    assert planilla["paso2_3h_deambulacion_escasa"] is None

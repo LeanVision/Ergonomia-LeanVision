@@ -229,6 +229,14 @@ def main(argv: list[str] | None = None) -> None:
                    help="peso que manipula de forma habitual (lo informa el evaluador)")
     p.add_argument("--hay-silla", action="store_true",
                    help="el puesto tiene asiento y el trabajador puede usarlo (lo informa el evaluador)")
+    # Los dos ítems del Paso 2 que no salen de la cámara. Sin respuesta quedan
+    # como "sin responder", y entonces el borrador no puede presumir tolerable:
+    # es la diferencia entre un ítem contestado que no y uno que nadie miró.
+    p.add_argument("--carga-termica", choices=("si", "no"), default=None,
+                   help="temperatura y humedad fuera de los límites admisibles (termohigrómetro)")
+    p.add_argument("--manifestacion-temprana", choices=("si", "no"), default=None,
+                   help="el trabajador presenta síntomas de las enfermedades del Art. 1° "
+                        "(lo informa el Servicio de Medicina del Trabajo)")
     p.add_argument("--corte-minimo", type=float, default=CORTE_MINIMO_S,
                    help="pausa en segundos que no corta una corrida de bipedestación")
     args = p.parse_args(argv)
@@ -254,7 +262,11 @@ def main(argv: list[str] | None = None) -> None:
     minutos = cargar_minutos(ruta)
     if not minutos:
         raise SystemExit(f"Sin minutos registrados en {ruta}.")
-    planilla = planilla_2d(minutos, args.hay_silla, args.carga_kg, args.corte_minimo)
+    def declarado(valor: str | None) -> bool | None:
+        return None if valor is None else valor == "si"
+
+    planilla = planilla_2d(minutos, args.hay_silla, args.carga_kg, args.corte_minimo,
+                           declarado(args.carga_termica), declarado(args.manifestacion_temprana))
     datos = {"Puesto": args.puesto, "Fecha": fecha, **planilla}
     ruta.with_suffix(".json").write_text(
         json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8"
