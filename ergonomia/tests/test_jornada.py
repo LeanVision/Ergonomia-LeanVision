@@ -211,3 +211,85 @@ def test_el_borrador_sale_tambien_en_pdf(tmp_path):
     assert "Prensa 2" in texto
     assert "sin posibilidad de sentarse" in texto
     assert "Evaluacion de Riesgos" in texto.replace("ó", "o")
+
+
+class _PoseConTronco:
+    """Siempre la misma persona, con el tronco que se le pida."""
+
+    def __init__(self, tronco):
+        self.tronco = tronco
+        self.llamadas = 0
+        self.cerrado = False
+
+    def cerrar(self):
+        self.cerrado = True
+
+    def estimar(self, cuadro, tiempo_ms):
+        self.llamadas += 1
+        return perfil(tronco=self.tronco)
+
+
+def test_el_modelo_de_control_corre_uno_de_cada_n():
+    principal, control = _PoseConTronco(10.0), _PoseConTronco(10.0)
+    jornada.medir_jornada(muestras(120), principal, cuadros_por_segundo=2.0,
+                          modelo_control=control, control_cada=10)
+    assert principal.llamadas == 120
+    assert control.llamadas == 12  # 2 % de carga si fuera uno de cada 50
+
+
+def test_el_control_anota_cuanto_se_corre_el_tronco():
+    minutos = jornada.medir_jornada(muestras(120), _PoseConTronco(10.0), cuadros_por_segundo=2.0,
+                                    modelo_control=_PoseConTronco(13.0), control_cada=10)
+    assert len(minutos) == 1
+    assert minutos[0].control_cuadros == 12
+    assert abs(minutos[0].control_tronco_max - 3.0) < 0.01
+    assert abs(minutos[0].control_tronco_suma / 12 - 3.0) < 0.01
+
+
+def test_sin_modelo_de_control_no_hay_control():
+    minutos = jornada.medir_jornada(muestras(120), _PoseConTronco(10.0), cuadros_por_segundo=2.0)
+    assert minutos[0].control_cuadros == 0
+    assert jornada.resumen_control(minutos) is None
+
+
+def test_el_resumen_avisa_si_el_desvio_mueve_de_banda():
+    chico = jornada.medir_jornada(muestras(60), _PoseConTronco(10.0), cuadros_por_segundo=2.0,
+                                  modelo_control=_PoseConTronco(11.0), control_cada=10)
+    assert "ATENCIÓN" not in jornada.resumen_control(chico)
+
+    grande = jornada.medir_jornada(muestras(60), _PoseConTronco(10.0), cuadros_por_segundo=2.0,
+                                   modelo_control=_PoseConTronco(18.0), control_cada=10)
+    assert "ATENCIÓN" in jornada.resumen_control(grande)
+
+
+def test_el_control_sobrevive_al_archivo(tmp_path):
+    ruta = jornada.ruta_del_dia(tmp_path, "Torno", "2026-10-23")
+    minutos = jornada.medir_jornada(muestras(120), _PoseConTronco(10.0), cuadros_por_segundo=2.0,
+                                    modelo_control=_PoseConTronco(13.0), control_cada=10)
+    for minuto in minutos:
+        jornada.guardar_minuto(ruta, minuto)
+    assert jornada.cargar_minutos(ruta) == minutos
+
+
+def test_el_borrador_informa_el_control_cruzado(tmp_path, monkeypatch):
+    video = tmp_path / "turno.mp4"
+    escritor = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*"mp4v"), 20, (1000, 1000))
+    for _ in range(20 * 60):  # 1 min a 20 fps
+        escritor.write(IMAGEN)
+    escritor.release()
+
+    modelos = {"principal": _PoseConTronco(10.0), "control": _PoseConTronco(14.0)}
+    monkeypatch.setattr(jornada, "crear_modelo",
+                        lambda nombre, ruta: modelos["control" if ruta == "control" else "principal"])
+    jornada.main(["--puesto", "Torno 1", "--salida", str(tmp_path), "--fuente", str(video),
+                  "--fecha", "2026-10-23", "--modelo-control", "yolo", "--ruta-control", "control",
+                  "--control-cada", "10"])
+
+    assert all(m.cerrado for m in modelos.values())
+    ruta = jornada.ruta_del_dia(tmp_path, "Torno 1", "2026-10-23")
+    datos = json.loads(ruta.with_suffix(".json").read_text(encoding="utf-8"))
+    assert datos["control_cruzado"]["cuadros"] == 12
+    assert abs(datos["control_cruzado"]["tronco_max"] - 4.0) < 0.01
+    texto = ruta.with_suffix(".md").read_text(encoding="utf-8")
+    assert "Control cruzado" in texto
+    assert "ATENCIÓN" in texto  # 4° mueve de banda

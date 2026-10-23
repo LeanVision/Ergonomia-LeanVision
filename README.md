@@ -92,6 +92,13 @@ falte alguno, el borrador no puede presumir que el riesgo sea tolerable.
 
 Y dos detalles de la medición:
 
+- `--modelo-control` y `--control-cada N` encienden el **modo mixto**: el
+  modelo principal mide todos los cuadros y un segundo modelo reprocesa uno de
+  cada N como control cruzado. El borrador informa cuánto se corrió el tronco
+  entre los dos, en promedio y como máximo, y avisa si pasa de 2°, que es
+  donde puede cambiar de banda REBA y cambiar lo que se informa. Pensado para
+  la IMX500, que mide sin tocar la CPU, con `yolo11n-pose` de control: uno de
+  cada cincuenta cuadros es 2 % de carga extra.
 - `--ancho-escena` son los metros reales que abarca el ancho de la imagen. Sin
   ese dato no hay metros y la deambulación queda **sin medir**, que es mejor que
   un número inventado: dar los 0 m por buenos haría contestar "0 m/h" y

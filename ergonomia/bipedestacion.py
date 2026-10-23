@@ -57,6 +57,13 @@ class Minuto:
     segundos_de_pie: float = 0.0
     segundos_sentado: float = 0.0
     metros: float = 0.0
+    # Control de calidad del modo mixto: cuántos cuadros del minuto se
+    # reprocesaron con el modelo de control y cuánto se corrió el tronco
+    # respecto del modelo principal. Sólo el tronco: es el ángulo con los
+    # umbrales más finos (20° y 60°) y el que decide la mayoría de los ítems.
+    control_cuadros: int = 0
+    control_tronco_suma: float = 0.0
+    control_tronco_max: float = 0.0
     # False = no había escala declarada, así que `metros` es 0 por falta de
     # dato y no porque la persona estuviera quieta. Sin esto, un puesto sin
     # calibrar contesta "0 m/h" y dispara solo el ítem 1 del Paso 2.
