@@ -102,6 +102,34 @@ Y dos detalles de la medición:
 
 A 2 cuadros por segundo alcanza: la 2.D habla de horas, no de instantes.
 
+## Elegir el modelo de pose con números
+
+En una Raspberry conviene exportar el modelo a NCNN, pero antes hay que ver si
+hace falta y, sobre todo, si los ángulos siguen dando lo mismo. Un modelo más
+rápido que corre el tronco cinco grados no sirve: los umbrales de la 2.F están
+en 20° y 60°, y los de la 2.A en 30°.
+
+```bash
+# Exporta el .pt a NCNN y lo compara contra PyTorch sobre el mismo video:
+python -m ergonomia.comparar video.mp4 --pytorch yolo11n-pose.pt --exportar-ncnn
+
+# Con los dos modelos ya en disco, y guardando los números crudos:
+python -m ergonomia.comparar video.mp4 --pytorch yolo11n-pose.pt     --ncnn yolo11n-pose_ncnn_model --cuadros 300 --salida comparacion.json
+```
+
+Por cada modelo informa milisegundos por cuadro (mediana y p95), cuántos
+cuadros sobreviven a los controles de calidad, el pico de memoria y, en Linux,
+la temperatura del SoC antes y después — que es el límite real cuando el
+proceso queda corriendo todo el turno.
+
+Y contra el primer modelo, que toma como referencia, informa **cuánto se
+mueven los ángulos**: mediana, p95 y máximo de la diferencia de tronco, cuello,
+brazo y rodilla, más el desplazamiento de los puntos en largos de torso. Si el
+p95 del tronco no llega a 2°, el modelo más rápido sale gratis.
+
+Cada modelo vuelve a leer el video en vez de guardar los cuadros en memoria: en
+una Pi de 1 GB, trescientos cuadros de 1080p no entran.
+
 ## Controles de calidad de la toma
 
 El informe empieza con una sección **"Calidad de la toma"** y avisa en
