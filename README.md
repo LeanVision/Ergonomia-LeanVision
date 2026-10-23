@@ -71,17 +71,29 @@ con eso alcanza para la planilla. No se guarda ni video ni cuadros.
 bipedestación más larga, la deambulación de la hora más quieta y las respuestas
 de los pasos 1, 2.1 y 2.2.
 
-Dos cosas que decide el evaluador y la cámara no puede ver:
+Los enunciados del borrador son los del formulario del Anexo I, y termina con
+la conclusión que pide la planilla: riesgo tolerable, se presume tolerable, o
+hay que hacer una Evaluación de Riesgos.
+
+Cuatro cosas que decide el evaluador y la cámara no puede ver:
 
 - `--hay-silla`: la cámara ve que el trabajador no se sienta, no si **no puede**
-  sentarse, que es lo que pregunta el Paso 1.
-- `--carga-kg`: el peso que manipula de forma habitual (Paso 2.2).
+  sentarse. Es condición del Paso 1 y de los dos primeros ítems del Paso 2.
+- `--carga-kg`: el peso que manipula de forma habitual (ítem 2 del Paso 2).
+- `--carga-termica si|no`: temperatura y humedad fuera de los límites
+  admisibles (ítem 3). Necesita termohigrómetro.
+- `--manifestacion-temprana si|no`: síntomas de las enfermedades del Art. 1°
+  (ítem 4). Lo informa el Servicio de Medicina del Trabajo.
+
+Un ítem que no se declaró queda en **sin responder**, nunca en "no": mientras
+falte alguno, el borrador no puede presumir que el riesgo sea tolerable.
 
 Y dos detalles de la medición:
 
 - `--ancho-escena` son los metros reales que abarca el ancho de la imagen. Sin
   ese dato no hay metros y la deambulación queda **sin medir**, que es mejor que
-  un número inventado.
+  un número inventado: dar los 0 m por buenos haría contestar "0 m/h" y
+  disparar el ítem 1 del Paso 2 en cualquier puesto sin calibrar.
 - Un minuto que la pose no pudo medir **corta** la bipedestación continua, y lo
   mismo los minutos que falten en el archivo si el proceso estuvo caído: no se
   puede declarar continuo lo que nadie midió.
