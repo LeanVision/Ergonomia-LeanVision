@@ -16,7 +16,7 @@ tarea en la jornada) y firme.
 
 ## Cómo filmar
 
-- **Cámara de costado al trabajador**, a la altura de la cintura o el pecho, con todo el cuerpo en cuadro. De frente los ángulos salen más chicos de lo que son.
+- **Cámara de costado al trabajador**, a la altura de la cintura o el pecho, con todo el cuerpo en cuadro. De frente los ángulos salen más chicos de lo que son. La tolerancia está medida (ver *Cuánto error mete la toma*): **hasta 15° de desvío de la perpendicular** el error de tronco se queda por debajo de 2°; a 30° ya son 5°.
 - Una sola persona en el puesto (si hay varias se toma la más grande en la imagen).
 - Varios ciclos completos de la tarea. Con un celular alcanza.
 
@@ -177,6 +177,47 @@ El informe empieza con una sección **"Calidad de la toma"** y avisa en
 
 Los videos que OpenCV no lee (por ejemplo AV1, el formato de muchas descargas
 de YouTube) se convierten solos si hay `ffmpeg` instalado.
+
+## Cuánto error mete la toma
+
+El montaje de la cámara importa más que el modelo, y ahora está medido. El
+estudio arma un esqueleto 3D con ángulos **conocidos**, lo proyecta como lo
+vería una cámara ubicada a tantos grados de la perpendicular, y compara lo que
+mide el repo contra la verdad. No necesita cámara, video ni modelo de pose: la
+verdad es el esqueleto 3D, así que el error que sale es el del método.
+
+```bash
+python -m ergonomia.sensibilidad
+python -m ergonomia.sensibilidad --tronco 45 --csv sensibilidad.csv
+```
+
+Con el tronco flexionado 60°:
+
+| Azimut | Tronco medido | Error | Separación de hombros | ¿Pasa el control? |
+|---|---|---|---|---|
+| 0° | 60,0° | 0,0° | 0,00 | sí |
+| 10° | 59,2° | 0,8° | 0,14 | sí |
+| 15° | 58,5° | 1,5° | 0,21 | sí |
+| 20° | 57,6° | **2,4°** | 0,28 | sí |
+| 25° | 56,3° | 3,7° | 0,36 | no |
+| 45° | 48,0° | 12,0° | 0,72 | no |
+
+Dos cosas salen de ahí:
+
+1. **La toma tolera hasta unos 15° de desvío** de la perpendicular. Más allá,
+   el error de tronco pasa los 2° y puede mover de banda REBA.
+2. **El control de perfil deja pasar una banda**: el error cruza los 2° a los
+   20° de azimut, pero el filtro (separación de hombros > 0,35) recién rechaza
+   a los 25-30°. Con 0,35 hay cuadros aceptados con error suficiente para
+   cambiar lo que se informa; con 0,25 esa banda se cierra, al costo de
+   descartar más cuadros. **La decisión está pendiente** y por eso el umbral
+   quedó como está.
+
+El segundo barrido mide el otro límite, la distancia. De perfil y con 1,5 px de
+ruido de pose, el error promedio de tronco es de 5,3° con el tronco ocupando
+20 px, 1,8° con 60 px y 0,5° con 200 px. El control de tamaño del repo exige
+6 % del alto de la imagen (unos 65 px en 1080), que cae justo donde el error
+promedio baja de 2°.
 
 ## Limitaciones
 
