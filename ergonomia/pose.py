@@ -6,6 +6,8 @@ Dos opciones, las dos corren local (el video no sale de la máquina):
   primera vez. No trae los dedos, así que la muñeca no se mide.
 - "mediapipe": MediaPipe Pose Landmarker (33 puntos, incluye dedos índice).
   Necesita el archivo .task descargado aparte (ver README).
+- "grabada": no infiere nada, relee keypoints guardados. Es como entra lo que
+  mide la IMX500 dentro del sensor (ver ergonomia.capturar_imx500).
 
 Si en el cuadro hay varias personas se toma la más grande: se supone que la
 cámara apunta al trabajador del puesto evaluado.
@@ -89,6 +91,47 @@ class PoseMediaPipe:
                           for j, nombre in _MEDIAPIPE.items()})
 
 
+class PoseGrabada:
+    """Relee keypoints ya grabados, en vez de correr un modelo.
+
+    Sirve para dos cosas: comparar contra lo que largó la IMX500 (que sólo se
+    puede medir en vivo, con la cámara puesta) y repetir una corrida sin
+    volver a inferir. El archivo lo deja `ergonomia.capturar_imx500`: una línea
+    por cuadro, con el número de cuadro y los 17 puntos COCO.
+
+    Se busca por número de cuadro y no por orden de llamada, así sigue
+    funcionando si quien lo usa saltea cuadros.
+    """
+
+    def __init__(self, ruta_jsonl: str):
+        import json
+
+        self.por_cuadro: dict[int, list[list[float]] | None] = {}
+        with open(ruta_jsonl, "r", encoding="utf-8") as archivo:
+            for numero, linea in enumerate(archivo, start=1):
+                linea = linea.strip()
+                if not linea:
+                    continue
+                try:
+                    fila = json.loads(linea)
+                except json.JSONDecodeError:
+                    continue  # una línea rota no tira abajo la comparación
+                self.por_cuadro[int(fila["cuadro"])] = fila.get("puntos")
+        if not self.por_cuadro:
+            raise SystemExit(f"Sin keypoints utilizables en {ruta_jsonl}")
+
+    def cerrar(self) -> None:
+        pass
+
+    def estimar(self, cuadro_bgr: np.ndarray, tiempo_ms: int) -> Esqueleto | None:
+        # `tiempo_ms` viene como el número de cuadro por cien (ver comparar.py).
+        puntos = self.por_cuadro.get(tiempo_ms // 100)
+        if not puntos:
+            return None
+        return Esqueleto({nombre: (float(p[0]), float(p[1]), float(p[2]))
+                          for nombre, p in zip(_COCO, puntos) if nombre})
+
+
 def crear_modelo(nombre: str, ruta_modelo: str | None):
     if nombre == "yolo":
         return PoseYolo(ruta_modelo or "yolo11n-pose.pt")
@@ -96,4 +139,8 @@ def crear_modelo(nombre: str, ruta_modelo: str | None):
         if not ruta_modelo:
             raise SystemExit("MediaPipe necesita --ruta-modelo con el archivo pose_landmarker_*.task (ver README).")
         return PoseMediaPipe(ruta_modelo)
+    if nombre == "grabada":
+        if not ruta_modelo:
+            raise SystemExit("Hace falta el keypoints.jsonl que deja ergonomia.capturar_imx500.")
+        return PoseGrabada(ruta_modelo)
     raise SystemExit(f"Modelo de pose desconocido: {nombre}")

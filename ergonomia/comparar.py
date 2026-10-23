@@ -84,7 +84,10 @@ def _cuadros(ruta: str, cuantos: int, paso: int):
                 break
             if indice % paso == 0:
                 entregados += 1
-                yield imagen
+                # El índice real del cuadro en el video, no el de entrega: es
+                # lo que permite cruzar con keypoints grabados aunque se
+                # saltee de a varios.
+                yield indice, imagen
             indice += 1
     finally:
         captura.release()
@@ -97,10 +100,10 @@ def medir_modelo(nombre: str, modelo, video: str, cuantos: int, paso: int,
     mediciones: list = []
     temperatura_inicial = temperatura_soc()
 
-    for i, imagen in enumerate(_cuadros(video, cuantos, paso)):
+    for indice, imagen in _cuadros(video, cuantos, paso):
         alto, ancho = imagen.shape[:2]
         arranque = time.perf_counter()
-        esqueleto = modelo.estimar(imagen, i * 100)
+        esqueleto = modelo.estimar(imagen, indice * 100)
         tiempos.append((time.perf_counter() - arranque) * 1000)
         medida = medir_cuadro(esqueleto, alto, ancho, lado)
         lado = medida.lado
@@ -222,6 +225,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--pytorch", default=None, help="pesos .pt de YOLO-pose")
     p.add_argument("--ncnn", default=None, help="carpeta del modelo exportado a NCNN")
     p.add_argument("--mediapipe", default=None, help="archivo .task de MediaPipe")
+    p.add_argument("--grabada", default=None,
+                   help="keypoints.jsonl de ergonomia.capturar_imx500 (lo que midió la IMX500)")
     p.add_argument("--exportar-ncnn", action="store_true",
                    help="exportar primero el .pt a NCNN y comparar contra él")
     p.add_argument("--cuadros", type=int, default=200, help="cuántos cuadros medir")
@@ -235,8 +240,12 @@ def main(argv: list[str] | None = None) -> None:
             raise SystemExit("--exportar-ncnn necesita --pytorch con el archivo .pt de origen.")
         ncnn = exportar_ncnn(args.pytorch)
 
+    # El primero que se pida es la referencia contra la que se miden los demás.
+    # La grabada va última a propósito: lo que se quiere leer es cuánto se
+    # desvía el sensor del modelo de referencia, no al revés.
     pedidos = [("pytorch", "yolo", args.pytorch), ("ncnn", "yolo", ncnn),
-               ("mediapipe", "mediapipe", args.mediapipe)]
+               ("mediapipe", "mediapipe", args.mediapipe),
+               ("imx500", "grabada", args.grabada)]
     pedidos = [(nombre, tipo, ruta) for nombre, tipo, ruta in pedidos if ruta]
     if not pedidos:
         raise SystemExit("Indicar al menos un modelo: --pytorch, --ncnn o --mediapipe.")

@@ -98,3 +98,57 @@ def test_sin_modelos_avisa(tmp_path):
 
     with pytest.raises(SystemExit):
         comparar.main([str(_video(tmp_path))])
+
+
+def _jsonl_de_keypoints(tmp_path, tronco, cuadros=10, falta=()):
+    """keypoints.jsonl como el que deja la captura en la Pi."""
+    from ergonomia.pose import _COCO
+
+    esqueleto = perfil(tronco=tronco)
+    ruta = tmp_path / "keypoints.jsonl"
+    with open(ruta, "w", encoding="utf-8") as archivo:
+        for i in range(cuadros):
+            puntos = None
+            if i not in falta:
+                puntos = [list(esqueleto.puntos.get(n, (0.0, 0.0, 0.0))) if n else [0.0, 0.0, 0.0]
+                          for n in _COCO]
+            archivo.write(json.dumps({"cuadro": i, "ts": 1700000000 + i, "puntos": puntos}) + "\n")
+    return ruta
+
+
+def test_la_pose_grabada_se_relee_por_numero_de_cuadro(tmp_path):
+    from ergonomia.pose import PoseGrabada
+
+    modelo = PoseGrabada(str(_jsonl_de_keypoints(tmp_path, tronco=10.0)))
+    # tiempo_ms es el número de cuadro por cien, como lo pasa comparar.py.
+    assert modelo.estimar(None, 0) is not None
+    assert modelo.estimar(None, 700) is not None
+    # Un cuadro que no está en el archivo no inventa una persona.
+    assert modelo.estimar(None, 999900) is None
+
+
+def test_los_cuadros_sin_persona_vuelven_vacios(tmp_path):
+    from ergonomia.pose import PoseGrabada
+
+    modelo = PoseGrabada(str(_jsonl_de_keypoints(tmp_path, tronco=10.0, falta=(3,))))
+    assert modelo.estimar(None, 200) is not None
+    assert modelo.estimar(None, 300) is None
+
+
+def test_el_sensor_grabado_se_compara_contra_el_modelo(tmp_path, monkeypatch):
+    # El caso real: la IMX500 midió en el puesto y se quiere saber cuánto se
+    # desvía de yolo11n-pose sobre el mismo video.
+    from ergonomia.pose import PoseGrabada
+
+    video = _video(tmp_path, 10)
+    grabada = _jsonl_de_keypoints(tmp_path, tronco=12.0, cuadros=10)
+    modelos = {"yolo11n-pose.pt": _PoseFija(10.0), str(grabada): PoseGrabada(str(grabada))}
+    monkeypatch.setattr(comparar, "crear_modelo", lambda tipo, ruta: modelos[ruta])
+
+    salida = tmp_path / "comparacion.json"
+    comparar.main([str(video), "--pytorch", "yolo11n-pose.pt", "--grabada", str(grabada),
+                   "--cuadros", "10", "--salida", str(salida)])
+
+    datos = json.loads(salida.read_text(encoding="utf-8"))
+    assert datos["referencia"] == "pytorch"
+    assert abs(datos["comparaciones"]["imx500"]["grados"]["tronco"]["mediana"] - 2.0) < 0.01
