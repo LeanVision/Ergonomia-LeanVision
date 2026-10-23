@@ -12,6 +12,9 @@ lo único que la 2.D permite contestar (ver `bipedestacion.py`).
     python -m ergonomia.jornada --informe --puesto "Embalaje linea 2" \\
         --carga-kg 8 --fecha 2026-10-22
 
+`--informe` deja, al lado del .jsonl del día, el borrador en .md, .json y .pdf
+(el PDF necesita fpdf2), con los enunciados del formulario del Anexo I.
+
 No se guarda ni video ni cuadros: de cada cuadro sale si la persona estaba de
 pie y cuánto se movió, y a disco van doce números por minuto. Una jornada de
 8 h son 480 líneas.
@@ -32,6 +35,7 @@ import cv2
 from .bipedestacion import CORTE_MINIMO_S, Minuto, planilla_2d, resumen_markdown, resumir_minuto
 from .esqueleto import medir_cuadro
 from .informe import Cuadro
+from .pdf import guardar_pdf
 from .pose import crear_modelo
 
 # Dos cuadros por segundo. La 2.D habla de horas seguidas, así que no hace
@@ -272,11 +276,15 @@ def main(argv: list[str] | None = None) -> None:
         json.dumps(datos, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     texto = resumen_markdown(planilla)
-    ruta.with_suffix(".md").write_text(
-        f"# Bipedestación — {args.puesto} — {fecha}\n\n{texto}\n", encoding="utf-8"
-    )
+    documento = f"# Bipedestación — {args.puesto} — {fecha}\n\n{texto}\n"
+    ruta.with_suffix(".md").write_text(documento, encoding="utf-8")
+    # El PDF sale del mismo Markdown que el .md, igual que en analizar.py: el
+    # borrador se adjunta a la planilla firmada, y para eso tiene que imprimirse.
+    hay_pdf = guardar_pdf(documento, ruta.with_suffix(".pdf"))
+    if not hay_pdf:
+        print("Para tener el borrador en PDF: pip install fpdf2")
     print(texto)
-    print(f"\nBorrador en {ruta.with_suffix('.md')}")
+    print(f"\nBorrador en {ruta.with_suffix('.md')}, .json" + (" y .pdf" if hay_pdf else ""))
 
 
 if __name__ == "__main__":
