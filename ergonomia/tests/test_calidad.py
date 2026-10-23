@@ -39,8 +39,10 @@ def test_descarta_los_cuadros_de_frente_y_avisa():
 
 
 def test_toma_buena_no_avisa():
+    # 150 cuadros a 10 por segundo son 15 s de postura medida: por encima del
+    # mínimo que pide el informe para considerarlo una muestra.
     a = calcular_angulos(perfil(tronco=30), "der")
-    inf = armar_informe([Cuadro(i / 10, a, (0.5, 0.5)) for i in range(50)], 10, Condiciones())
+    inf = armar_informe([Cuadro(i / 10, a, (0.5, 0.5)) for i in range(150)], 10, Condiciones())
     assert "ATENCIÓN" not in informe_markdown(inf)
 
 
@@ -120,3 +122,37 @@ def test_el_informe_avisa_de_los_saltos_imposibles():
     inf = armar_informe(cuadros, 10, Condiciones())
     assert inf["calidad"]["saltos_de_angulo_imposibles"] > 50
     assert "saltos imposibles" in informe_markdown(inf)
+
+
+def test_avisa_cuando_la_muestra_es_demasiado_chica():
+    # Caso real: un video de seguridad laboral, casi todo primeros planos. Se
+    # midieron 4 cuadros de 1022 y el informe publicaba igual REBA y
+    # porcentajes de tiempo, como si describieran la tarea.
+    from ergonomia.informe import informe_markdown
+
+    a = calcular_angulos(perfil(tronco=30), "der")
+    pocos = [Cuadro(i / 10, a if i < 4 else None) for i in range(1000)]
+    inf = armar_informe(pocos, 10, Condiciones())
+    assert inf["calidad"]["segundos_medidos"] == 0.4
+    texto = informe_markdown(inf)
+    assert "no describe la tarea" in texto
+    assert "0.4 s de los" in texto
+
+
+def test_con_muestra_suficiente_no_avisa_por_tamano():
+    from ergonomia.informe import informe_markdown
+
+    a = calcular_angulos(perfil(tronco=30), "der")
+    inf = armar_informe([Cuadro(i / 10, a) for i in range(300)], 10, Condiciones())
+    assert inf["calidad"]["segundos_medidos"] == 30.0
+    assert "no describe la tarea" not in informe_markdown(inf)
+
+
+def test_los_puntajes_reba_salen_redondeados():
+    # En el informe de un video real salía "percentil 90: 5.1000000000000005".
+    a = calcular_angulos(perfil(tronco=30), "der")
+    b = calcular_angulos(perfil(tronco=70), "der")
+    cuadros = [Cuadro(i / 10, a if i % 3 else b) for i in range(300)]
+    reba = armar_informe(cuadros, 10, Condiciones())["reba"]
+    for clave in ("mediana", "percentil_90"):
+        assert reba[clave] == round(reba[clave], 1)

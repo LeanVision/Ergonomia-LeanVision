@@ -33,6 +33,11 @@ SALTO_PERSONA = 0.15
 GRADOS_POR_SEGUNDO_IMPOSIBLES = 300.0
 # Por debajo de este % de cuadros de costado, el informe avisa que no es confiable.
 PERFIL_MINIMO = 70.0
+# Y por debajo de estos segundos de postura efectivamente medida, directamente
+# no hay muestra. Medido en un video de seguridad laboral, casi todo en primeros
+# planos: se midieron 4 cuadros de 1022, y el informe igual publicaba REBA y
+# porcentajes de tiempo como si describieran la tarea.
+SEGUNDOS_MEDIDOS_MINIMOS = 10.0
 
 # Una postura que casi no cambia durante más de esto suma 1 en la actividad REBA.
 SEGUNDOS_POSTURA_ESTATICA = 60.0
@@ -149,12 +154,13 @@ def armar_informe(cuadros: list[Cuadro], fps: float, condiciones: Condiciones,
             "cuadros_cuerpo_cortado": sum(1 for c in cuadros_totales if not c.cuerpo_entero),
             "cambios_de_persona_o_toma": contar_saltos(cuadros_totales),
             "saltos_de_angulo_imposibles": contar_saltos_de_angulo(cuadros),
+            "segundos_medidos": round(len(medidos) / fps, 1) if fps > 0 else 0.0,
         },
         "condiciones": asdict(condiciones),
         "reba": {
             "maximo": int(puntajes.max()) if len(puntajes) else None,
-            "mediana": float(np.median(puntajes)) if len(puntajes) else None,
-            "percentil_90": float(np.percentile(puntajes, 90)) if len(puntajes) else None,
+            "mediana": round(float(np.median(puntajes)), 1) if len(puntajes) else None,
+            "percentil_90": round(float(np.percentile(puntajes, 90)), 1) if len(puntajes) else None,
             "actividad_sumada": actividad,
             "porcentaje_por_nivel": {
                 nombre: round(_porcentaje([r.nivel == nombre for r in rebas]), 1)
@@ -227,6 +233,10 @@ def informe_markdown(inf: dict) -> str:
         avisos.append(f"la persona está de costado sólo en el {perfil:.0f} % de los cuadros con persona")
     if calidad["cambios_de_persona_o_toma"]:
         avisos.append(f"la persona seguida o la toma cambió {calidad['cambios_de_persona_o_toma']} veces")
+    if calidad["segundos_medidos"] < SEGUNDOS_MEDIDOS_MINIMOS:
+        avisos.append(f"sólo se midieron {calidad['segundos_medidos']:.1f} s de postura, "
+                      f"menos de los {SEGUNDOS_MEDIDOS_MINIMOS:.0f} s mínimos: lo que sigue "
+                      "no describe la tarea")
     if calidad["saltos_de_angulo_imposibles"]:
         avisos.append(f"el tronco dio {calidad['saltos_de_angulo_imposibles']} saltos imposibles "
                       "entre cuadros seguidos")
@@ -237,6 +247,8 @@ def informe_markdown(inf: dict) -> str:
             "",
         ]
     lineas += [
+        f"- **Postura efectivamente medida:** {calidad['segundos_medidos']:.1f} s "
+        f"de los {inf['duracion_s']:.1f} s analizados",
         f"- **De costado a la cámara:** {_f(perfil, ' %')} de los cuadros con persona "
         "(sólo esos se usan para los ángulos)",
         f"- **Cuadros sin persona detectada:** {calidad['cuadros_sin_persona']}",
